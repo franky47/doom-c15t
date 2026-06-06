@@ -345,7 +345,7 @@ html, body {
 <!-- Gameplay hint. Sits just above the attribution bar so it's visible
      without crowding the game. Tells the player where the html-in-canvas
      form is and how to interact with it. -->
-<div id="tip">Form is to the left of your start position. Shoot it to focus.</div>
+<div id="tip">Form is straight ahead, between the pillars. Shoot it to focus.</div>
 
 <!--
   One canvas. Real Doom renders into it. A real HTML form is a direct child
@@ -637,11 +637,21 @@ import {
   // to the rest of the level.
   const formTarget = {
     textureName: 'PIPE2',
-    x: 0,
+    // x:48 centres the 160-wide form inside PIPE2's 256-wide texture, so the
+    // panel sits dead-centre in the 256-unit opening between the two pillars.
+    x: 48,
     y: 0,
     w: 160,
     h: 72,
   };
+
+  // Horizontal flip of the captured form when writing into the patch cache.
+  // For LD39's south (player-facing) side this must be FALSE: the back-side
+  // seg runs v2→v1, so the midtexture's U starts at the WEST vertex, and with
+  // the player facing north (east = screen-right) the form already reads the
+  // right way round. Kept as a flag so the other sidedef / other walls can
+  // opt in if their seg winding mirrors the image.
+  const FORM_FLIP_X = false;
 
   function currentTexture() {
     const n = formTarget.textureName;
@@ -931,26 +941,45 @@ import {
     if (!lump) { console.warn('[doom] E1M1 SIDEDEFS not found'); return false; }
     const u8 = memU8();
     const SD_SIZE = 30;
-    const target = 6;  // sidedef index
-    const base = lump.ofs + target * SD_SIZE;
-    // Sanity check: current middle should be STARTAN3.
-    let cur = '';
-    for (let k = 0; k < 8; k++) {
-      const c = u8[base + 20 + k];
-      if (!c) break;
-      cur += String.fromCharCode(c);
-    }
-    if (cur.toUpperCase() !== 'STARTAN3') {
-      console.warn(`[doom] E1M1 sidedef ${target} unexpected middle '${cur}' (wanted STARTAN3)`);
-      return false;
-    }
-    // Write "PIPE2\0\0\0".
+    // LD39 is the 2-sided line v1(1184,-3392)→v2(928,-3392) — the pit's
+    // south-rim opening between the two front pillars — separating sec38
+    // (spawn floor, the player's side) from sec37 (the pit rim). We give a
+    // middle texture to BOTH of its sidedefs so the panel is a solid,
+    // double-sided kiosk: sd44 (LEFT, sec38) faces the player at spawn, and
+    // sd43 (RIGHT, sec37) renders it from the pit side too — otherwise the
+    // far side is a see-through gap. The midtexture hangs in the 72-tall
+    // opening (z 0..72); the line is top-pegged (ML_DONTPEGTOP) and
+    // non-blocking, so the panel sits flush under the ceiling and movement
+    // is unaffected.
     const name = 'PIPE2';
-    for (let k = 0; k < 8; k++) {
-      u8[base + 20 + k] = k < name.length ? name.charCodeAt(k) : 0;
+    const targets = [
+      { idx: 44, label: 'LD39 south (player-facing)' },
+      { idx: 43, label: 'LD39 north (pit side)' },
+    ];
+    let wrote = 0;
+    for (const { idx, label } of targets) {
+      const base = lump.ofs + idx * SD_SIZE;
+      // Sanity check: this sidedef's middle should be unset in vanilla. The
+      // WAD stores "no texture" as the literal name "-" (not all-zeros), so
+      // accept both an empty string and a lone dash as "unset".
+      let cur = '';
+      for (let k = 0; k < 8; k++) {
+        const c = u8[base + 20 + k];
+        if (!c) break;
+        cur += String.fromCharCode(c);
+      }
+      if (cur !== '' && cur !== '-') {
+        console.warn(`[doom] E1M1 sidedef ${idx} unexpected middle '${cur}' (wanted unset)`);
+        continue;
+      }
+      // Write "PIPE2\0\0\0".
+      for (let k = 0; k < 8; k++) {
+        u8[base + 20 + k] = k < name.length ? name.charCodeAt(k) : 0;
+      }
+      console.log(`[doom] E1M1 sidedef ${idx} ${label} middle: (empty) → PIPE2`);
+      wrote++;
     }
-    console.log(`[doom] E1M1 sidedef ${target} middle: STARTAN3 → PIPE2`);
-    return true;
+    return wrote > 0;
   }
 
   mutatePipe2ForForm();
@@ -1272,8 +1301,11 @@ import {
       const colBase = st.cacheMemOfs + meta.columnOfs[localCol] + 3 + formTarget.y;
       const maxRows = Math.min(rectH, meta.height - formTarget.y);
 
+      // Flip the source column horizontally when FORM_FLIP_X is set, so the
+      // east→west texture U of LD39 doesn't mirror the form for the player.
+      const srcDx = FORM_FLIP_X ? (rectW - 1 - dx) : dx;
       for (let dy = 0; dy < maxRows; dy++) {
-        const i = (dy * rectW + dx) * 4;
+        const i = (dy * rectW + srcDx) * 4;
         u8[colBase + dy] = quantise(img[i], img[i+1], img[i+2]);
       }
     }
@@ -1623,10 +1655,14 @@ import {
   // Vertex 5 sits closer to the spawn point (the NEAR end of the
   // trapezoid).
   const WALL_GEOM = {
-    v1: { x: 960, y: -3648 },   // near (linedef start, vertex 5)
-    v2: { x: 832, y: -3552 },   // far  (linedef end,   vertex 7)
-    zTop: 72,                   // sector ceiling
-    zBot: 0,                    // sector floor
+    // The centred 160-wide band of LD39's 256-unit opening (y=-3392). The full
+    // opening spans x 928..1184; the form occupies the middle 160 (x 976..1136,
+    // centred on the player's spawn x=1056). v1 = WEST edge (form col 0 /
+    // player's left after FORM_FLIP_X), v2 = EAST edge (form col 159).
+    v1: { x:  976, y: -3392 },  // west  → form left
+    v2: { x: 1136, y: -3392 },  // east  → form right
+    zTop: 72,                   // opening top  (sec38 ceiling)
+    zBot: 0,                    // opening floor(sec38 floor)
   };
 
   // Doom view constants. centery accounts for the 32-pixel status bar at
@@ -1920,18 +1956,10 @@ import {
     // CSS bounding rect (and therefore DOM hit-testing) tracks the
     // player as they move and turn.
     if (playerMobjOfs < 0) {
-      if (findPlayerMobj()) {
-        // One-shot: rotate the player 90° left on first lock-on so the
-        // form wall (which sits to the west of spawn, behind an angled
-        // linedef) is already in view and the "shoot to focus" prompt
-        // is reachable without any turning. Spawn angle is ANG90
-        // (north, 0x40000000); +90° counterclockwise → ANG180 (west,
-        // 0x80000000). We write mo->angle directly — P_PlayerThink
-        // reads from there each tick, and the view angle syncs for
-        // free since there's no pending turn momentum on frame 1.
-        new DataView(moduleMemory.buffer)
-          .setUint32(playerMobjOfs + 20, 0x80000000, true);
-      }
+      // Keep the player's northward spawn facing (ANG90). The form-pit's
+      // south rim is directly ahead of the spawn point, so no rotation is
+      // needed — the panel is in view the moment the level loads.
+      findPlayerMobj();
     }
     if (projectWallQuad()) positionFormOverDoor();
   }
