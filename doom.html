@@ -114,17 +114,18 @@ html, body {
 /* Title — c15t's "We value your privacy". 7px so all 21 chars fit on one line
    inside the 156px content box (8px overflowed and got clipped). */
 #uac-terminal .c15-title {
-  font-size: 9px;
-  line-height: 10px;
+  font-size: 8px;
+  line-height: 9px;
   color: #ffe0a0;
   text-align: center;
   letter-spacing: 0;
+  white-space: nowrap;     /* one line — frees vertical room for the footer */
 }
 /* Description — c15t's default cookie copy, dimmer than the title. 6px keeps
    the wrapped copy to ~3 lines inside the 156px content width and leaves room
    for the action buttons below within the 72px-tall texture. */
 #uac-terminal .c15-desc {
-  font-size: 7px;
+  font-size: 8px;
   line-height: 8px;
   color: #c2a078;
   text-align: center;
@@ -141,14 +142,14 @@ html, body {
 }
 #uac-terminal .c15-btn {
   flex: 1 1 0;
-  height: 10px;
+  height: 14px;
   padding: 0 1px;
   background: #1a0b08;
   color: #ffcc66;
   border: 1px solid #6a0f00;
   font-family: 'Silkscreen', monospace;
-  font-size: 8px;
-  line-height: 8px;
+  font-size: 9px;
+  line-height: 10px;
   letter-spacing: 0;
   white-space: nowrap;
   cursor: pointer;
@@ -162,8 +163,10 @@ html, body {
   background: #2f7d3a; border-color: #46d35a; color: #d9ffd9;
 }
 #uac-terminal .c15-btn.customize {
-  flex-basis: 100%;
+  flex: 0 0 auto;
+  width: auto;
   height: 8px;
+  padding: 0;
   background: transparent;
   border-color: transparent;
   color: #c89a6a;
@@ -180,15 +183,27 @@ html, body {
 #uac-terminal .c15-btn.accept:focus   { background: #46d35a; color: #06200a; }
 #uac-terminal .c15-btn.customize:focus { background: #3a1c0a; color: #ffffff; }
 
-/* "Secured by c15t" — c15t's footer attribution. */
-#uac-terminal .c15-secured {
-  font-size: 6px;
-  line-height: 7px;
-  color: #6a5038;
-  text-align: center;
+/* Bottom row: Customize (left) + "Secured by c15t" (right) sharing one line. */
+#uac-terminal .c15-foot {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
   margin-top: 2px;
 }
-#uac-terminal .c15-secured b { color: #c89a6a; font-weight: 700; }
+/* "Secured by c15t" — c15t's footer attribution. */
+#uac-terminal .c15-secured {
+  font-size: 8px;
+  line-height: 9px;
+  color: #6a5038;
+  white-space: nowrap;
+}
+/* Bump just the "c15t" mark — at 6px it quantised to mush ("DLGT"); 9px gives
+   each glyph enough texels to read. */
+#uac-terminal .c15-secured b {
+  font-size: 9px;
+  color: #ffcc66;
+  font-weight: 600;
+}
 
 /* Customize view — c15t's five consent categories (we surface four; the
    necessary one is locked on). */
@@ -335,14 +350,16 @@ html, body {
          Real <button> elements, so keyboard focus (shoot to highlight) and
          native Space/Enter activation work through the layoutsubtree. -->
     <div class="banner-view">
-      <div class="c15-title">WE VALUE<br>YOUR PRIVACY</div>
+      <div class="c15-title">WE VALUE YOUR PRIVACY</div>
       <div class="c15-desc">We use cookies to improve your experience.</div>
       <div class="c15-actions">
-        <button type="button" class="c15-btn reject"    id="c15-reject">Reject All</button>
-        <button type="button" class="c15-btn accept"    id="c15-accept">Accept All</button>
-        <button type="button" class="c15-btn customize" id="c15-customize">Customize</button>
+        <button type="button" class="c15-btn reject" id="c15-reject">Reject All</button>
+        <button type="button" class="c15-btn accept" id="c15-accept">Accept All</button>
       </div>
-      <div class="c15-secured">Secured by <b>c15t</b></div>
+      <div class="c15-foot">
+        <button type="button" class="c15-btn customize" id="c15-customize">Customize</button>
+        <span class="c15-secured">Secured by <b>c15t</b></span>
+      </div>
     </div>
 
     <!-- Customize: c15t's per-category toggles. Necessary is locked on. -->
