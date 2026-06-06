@@ -1,0 +1,2212 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>DOOM — html-in-canvas</title>
+<link href="https://fonts.googleapis.com/css2?family=VT323&family=Share+Tech+Mono&family=Silkscreen:wght@400;700&display=swap" rel="stylesheet">
+<style>
+*, *::before, *::after { margin: 0; padding: 0; box-sizing: border-box; }
+html, body {
+  width: 100%; height: 100%;
+  background: #000; color: #c0c0c0;
+  font-family: 'Share Tech Mono', 'Courier New', monospace;
+  overflow: hidden;
+  /* Stop browser from treating arrows/space as scroll input */
+  overscroll-behavior: none;
+}
+
+/* ─────────────────────────────────────────────────────────────
+   Main canvas. layoutsubtree = its children are real DOM that
+   get laid out off-screen (hit-testable, focusable, inspectable)
+   but NEVER painted visually by the browser. The only way their
+   pixels reach the screen is via ctx.drawElementImage() below,
+   which runs inside our compositor on every Doom frame.
+   ───────────────────────────────────────────────────────────── */
+#game {
+  display: block;
+  width: 100%;
+  height: 100%;
+  image-rendering: pixelated;
+  image-rendering: crisp-edges;
+  background: #000;
+  outline: none;
+}
+
+/* The UAC terminal. Real DOM, child of <canvas layoutsubtree>.
+   `layoutsubtree` stops the browser from painting it natively; the
+   ONLY way its pixels reach the screen is via drawElementImage() in
+   our compositor, which samples it and writes the quantised pixels
+   straight into Doom's wall-texture cache.
+
+   KEY CONSTRAINT: this element is sized at exactly 64×72 CSS pixels —
+   the WORLD-SPACE dimensions of the DOOR3 wall segment in E1M1. Doom
+   textures map 1 texel per world unit, so although the DOOR2_4 backing
+   patch is 128×128, only the upper-left 64×72 of it ever reaches the
+   player's eye. Verified with a banded-palette diagnostic — see
+   tools/doom-pw-tex-gradient.mjs.
+
+   Rendering into those 64×72 texels directly (1 CSS px == 1 Doom texel)
+   gives pixel-perfect 1:1 sampling, no scaling artifacts, no wasted
+   work. Silkscreen 8px fits ~10 characters per line and ~8 lines tall.
+
+   POSITIONING: a CSS transform `translate(...) scale(...)` stretches
+   the 64×72 element to cover the door's on-screen CSS rect. That way:
+     - the DevTools inspector highlight shows the TRANSFORMED bounding
+       rect — exactly where the door is on screen, matching what the
+       player sees;
+     - native mouse hit-testing maps clicks through the inverse transform
+       so they hit the real <input>/<textarea>/<button> beneath the door
+       pixels;
+     - the capture path (overlayForm) temporarily zeros the transform
+       before calling drawElementImage, so rasterisation happens at the
+       native 64×72 size, not the scaled-up size.
+
+   Chromium's layoutsubtree forces children to `position: static` and
+   ignores margins, so CSS `transform` is the only primitive that
+   reliably moves the bounding rect. `position: fixed` must NOT be used
+   — a fixed child escapes the canvas's paint containment and renders
+   natively on top of the game. */
+#uac-terminal {
+  width: 160px;
+  height: 72px;
+  box-sizing: border-box;
+  background: #1a0b08;
+  color: #ff9060;
+  font-family: 'Silkscreen', monospace;
+  font-size: 8px;
+  line-height: 1;
+  letter-spacing: 0;
+  border: 1px solid #6a0f00;
+  /* 2px top so Silkscreen header ascenders clear the wall's top edge.
+     Side padding kept at 2px so the inputs' borders sit a hair inside
+     the frame, leaving a clean 1-pixel reveal of #1a0b08. */
+  padding: 2px 2px 2px 2px;
+  pointer-events: auto;
+  overflow: hidden;
+  /* Pixel-perfect rendering — no subpixel AA; letters land on the
+     pixel grid so the palette-quantise step is 1:1 with no blur. */
+  font-smooth: never;
+  -webkit-font-smoothing: none;
+  -moz-osx-font-smoothing: none;
+  text-rendering: optimizeSpeed;
+}
+
+/* Two views that swap based on data-state. Only one is visible at a
+   time — capture path reads whichever is currently rendered.
+
+   The form-view is a flex column that fills the inner content box of
+   #uac-terminal so the footer (timer + SEND button) can be `margin-top:
+   auto` and stick to the bottom regardless of how many fields sit
+   above it. Everything is sized to land on integer 8-pixel rows. */
+#uac-terminal .form-view {
+  display: flex;
+  flex-direction: column;
+  width: 100%;
+  height: 100%;
+}
+#uac-terminal .thanks-view { display: none; }
+#uac-terminal[data-state="thanks"] .form-view { display: none; }
+#uac-terminal[data-state="thanks"] .thanks-view { display: flex; }
+
+#uac-terminal .hdr {
+  font-size: 8px;
+  color: #ffcc66;
+  text-align: center;
+  letter-spacing: 0;
+  line-height: 8px;
+  height: 8px;
+}
+
+#uac-terminal form {
+  display: flex;
+  flex-direction: column;
+  flex: 1 1 auto;
+  margin-top: 2px;
+  min-height: 0;
+}
+
+#uac-terminal .field {
+  display: block;
+  margin-top: 1px;
+}
+#uac-terminal .field:first-child { margin-top: 0; }
+
+#uac-terminal input {
+  display: block;
+  width: 100%;
+  height: 10px;
+  background: #000;
+  color: #ffcc66;
+  font-family: 'Silkscreen', monospace;
+  font-size: 8px;
+  line-height: 1;
+  border: 1px solid #6a0f00;
+  padding: 0 1px;
+  margin: 0;
+  outline: none;
+  /* Bright red blinking caret so you can see it against the dark bg. */
+  caret-color: #ff3b1f;
+  pointer-events: auto;
+  box-sizing: border-box;
+  -webkit-text-fill-color: #ffcc66;
+}
+#uac-terminal input:focus {
+  /* Brighter border and text when the field holds keyboard focus — also
+     swaps the placeholder colour so the focus is unmistakable even when
+     the input is empty. */
+  border-color: #ffcc66;
+  background: #2a1308;
+  color: #fff;
+  -webkit-text-fill-color: #fff;
+}
+/* Mid-grey placeholders so they read as "empty / hint" rather than as
+   real text. Clears the visual once the field has a value. */
+#uac-terminal input::placeholder { color: #777; }
+#uac-terminal input:focus::placeholder { color: #999; }
+
+/* Validation state — two paths light this up:
+   1. `:user-invalid`: user typed something invalid (e.g. bad email
+      format). Fires as soon as they interact.
+   2. `.show-errors input:invalid`: form was submitted with empty
+      required fields. Added programmatically on submit attempt.
+   Bright red border + tinted background is the only way the error
+   reads through the palette quantise step at 160×72. */
+#uac-terminal input:user-invalid,
+#uac-terminal.show-errors input:invalid {
+  border-color: #ff3b1f;
+  background: #3a0a04;
+  color: #ff7050;
+  -webkit-text-fill-color: #ff7050;
+}
+#uac-terminal.show-errors input:invalid::placeholder {
+  color: #ff7050;
+}
+/* Error line in the footer — replaces the timer when validation fails. */
+#uac-terminal .footer .err {
+  display: none;
+  color: #ff3b1f;
+  text-shadow: 0 0 2px #ff3b1f;
+  letter-spacing: 0.04em;
+}
+#uac-terminal.show-errors .footer .timer { display: none; }
+#uac-terminal.show-errors .footer .err   { display: inline; }
+
+/* Quiet hint that sits between the last input and the footer. Lives in
+   the blank space that the footer's margin-top:auto would otherwise
+   leave empty. Intentionally dimmer than placeholder grey so it reads
+   as metadata, not form content. */
+#uac-terminal .hint {
+  font-size: 7px;
+  line-height: 7px;
+  letter-spacing: 0.05em;
+  color: #555;
+  text-align: center;
+  margin-top: 4px;
+}
+#uac-terminal.show-errors .hint { display: none; }
+
+#uac-terminal .footer {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  height: 10px;
+  /* Push to the bottom of the flex column so the SEND button always
+     anchors to the bottom edge of the wall regardless of field count. */
+  margin-top: auto;
+  font-size: 8px;
+  line-height: 10px;
+  letter-spacing: 0;
+}
+#uac-terminal .footer .timer {
+  color: #aa2200;
+  flex: 0 0 auto;
+}
+#uac-terminal .footer button {
+  flex: 0 0 auto;
+  display: inline-block;
+  height: 10px;
+  padding: 0 2px;
+  margin: 0;
+  background: #6a0f00;
+  color: #ffe0a0;
+  border: 1px solid #ff3b1f;
+  font-family: 'Silkscreen', monospace;
+  font-size: 8px;
+  line-height: 8px;
+  letter-spacing: 0;
+  cursor: pointer;
+  pointer-events: auto;
+  box-sizing: border-box;
+}
+#uac-terminal .footer button:hover,
+#uac-terminal .footer button:focus {
+  background: #ff3b1f;
+  color: #1a0b08;
+  outline: none;
+}
+
+/* Thanks screen — centred both axes, 6 short lines to keep every line
+   inside the 62-pixel content width at Silkscreen 8px. */
+#uac-terminal .thanks-view {
+  width: 100%;
+  height: 100%;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  color: #ffcc66;
+  font-size: 8px;
+  line-height: 8px;
+}
+#uac-terminal .thanks-view .line { display: block; }
+#uac-terminal .thanks-view .title {
+  color: #ffcc66;
+  margin-bottom: 3px;
+}
+#uac-terminal .thanks-view .sig {
+  color: #aa2200;
+  margin-top: 3px;
+}
+
+/* Attribution bar — fixed to the bottom so a fullscreen canvas can't
+   push it off.  Stays unobtrusive: small, dim grey, minimal background
+   so it doesn't steal visual weight from the game. Links light up a
+   little on hover. */
+#attribution {
+  position: fixed;
+  left: 0; right: 0; bottom: 0;
+  padding: 6px 12px;
+  background: rgba(0, 0, 0, 0.55);
+  color: #777;
+  font-family: 'Share Tech Mono', 'Courier New', monospace;
+  font-size: 11px;
+  line-height: 1.4;
+  letter-spacing: 0.02em;
+  text-align: center;
+  z-index: 1000;
+  pointer-events: auto;
+}
+#attribution a {
+  color: #9a9a9a;
+  text-decoration: none;
+  border-bottom: 1px dotted #555;
+}
+#attribution a:hover { color: #c0c0c0; border-bottom-color: #888; }
+
+/* Gameplay hint sitting above the attribution bar. Warmer tint so it
+   reads as a hint, not legalese. Bold so it's easy to spot against
+   the Doom status bar. Pointer events off — purely informational. */
+#tip {
+  position: fixed;
+  left: 0; right: 0;
+  bottom: 42px;
+  text-align: center;
+  font-family: 'Share Tech Mono', 'Courier New', monospace;
+  font-size: 13px;
+  font-weight: bold;
+  letter-spacing: 0.04em;
+  color: #a08060;
+  text-shadow: 0 0 4px rgba(0, 0, 0, 0.8);
+  z-index: 1000;
+  pointer-events: none;
+}
+
+#missing-api {
+  position: fixed; inset: 0;
+  display: none;
+  align-items: center; justify-content: center;
+  background: #050000;
+  color: #ff9060;
+  padding: 40px;
+  font-size: 15px;
+  line-height: 1.7;
+  z-index: 9999;
+}
+#missing-api.visible { display: flex; }
+#missing-api .box { max-width: 560px; border: 2px solid #6a0f00; padding: 28px; }
+#missing-api h2 { color: #ff3b1f; margin-bottom: 12px; font-size: 26px; text-shadow: 0 0 6px #ff3b1f; }
+#missing-api code { background: #1a0b08; padding: 2px 6px; color: #ffcc66; }
+</style>
+</head>
+<body>
+
+<!-- Attribution bar. Fixed-position so a fullscreen canvas keeps it
+     visible. Kept deliberately small and low-contrast so it's out of
+     the way during play but still readable. -->
+<div id="attribution">
+  DOOM &copy; 1993 id Software &mdash; freely-redistributable shareware episode, under id&rsquo;s original shareware licence &middot;
+  engine: GPL v2 &middot;
+  not affiliated with / endorsed by id Software, Bethesda, ZeniMax or Microsoft &middot;
+  <a href="https://store.steampowered.com/app/2280/DOOM_1993/" target="_blank" rel="noopener">buy the full game</a> &middot;
+  tech demo by <a href="https://solarise.dev" target="_blank" rel="noopener">Robin Metcalfe</a>
+</div>
+
+<!-- Gameplay hint. Sits just above the attribution bar so it's visible
+     without crowding the game. Tells the player where the html-in-canvas
+     form is and how to interact with it. -->
+<div id="tip">Form is to the left of your start position. Shoot it to focus.</div>
+
+<!--
+  One canvas. Real Doom renders into it. A real HTML form is a direct child
+  of the same canvas (layoutsubtree) — it's laid out off-screen, so it's a
+  live DOM subtree (focus, typing, autofill, selection all work) but the
+  browser never paints it to the screen. The ONLY way its pixels reach the
+  user is via overlayForm(): we drawElementImage() it into an offscreen
+  canvas, quantise to the Doom palette, and write the result directly into
+  DOOR2_4's cached-patch bytes in wasm linear memory. Doom's own renderer
+  then paints the form onto the DOOR3 wall as real Doom wall texture.
+-->
+<canvas id="game" layoutsubtree tabindex="0">
+
+  <div id="uac-terminal" data-state="form">
+
+    <div class="form-view">
+      <div class="hdr">UAC COMPLAINTS</div>
+
+      <form id="enquiry" novalidate>
+        <div class="field">
+          <input type="text" id="f-name" name="name"
+                 autocomplete="off" spellcheck="false"
+                 placeholder="NAME" maxlength="32" required>
+        </div>
+        <div class="field">
+          <input type="email" id="f-email" name="email"
+                 autocomplete="off" spellcheck="false"
+                 placeholder="EMAIL" maxlength="32" required>
+        </div>
+        <div class="field">
+          <input type="text" id="f-concern" name="concern"
+                 autocomplete="off" spellcheck="false"
+                 placeholder="COMPLAINT" maxlength="32" required>
+        </div>
+        <div class="hint">SHOOT TO FOCUS</div>
+        <div class="footer">
+          <span class="timer" id="timer">00:00:00</span>
+          <span class="err">FILL ALL FIELDS</span>
+          <button type="submit" id="submit-btn">SEND</button>
+        </div>
+      </form>
+    </div>
+
+    <div class="thanks-view">
+      <span class="line title">THANKS!</span>
+      <span class="line">YOUR</span>
+      <span class="line">CONCERNS</span>
+      <span class="line">HAVE BEEN</span>
+      <span class="line">NOTED</span>
+      <span class="line sig">UAC</span>
+    </div>
+
+  </div>
+
+</canvas>
+
+<div id="missing-api">
+  <div class="box">
+    <h2>HTML-IN-CANVAS REQUIRED</h2>
+    <p>This demo uses <code>drawElementImage()</code>, part of the WICG html-in-canvas proposal.</p>
+    <p style="margin-top:10px">Open in Chrome with <code>chrome://flags/#canvas-draw-element</code> enabled.</p>
+  </div>
+</div>
+
+<script type="module">
+import {
+  WAD_EMBEDDED_OFFSET,
+  DOOM_PALETTE,
+  DOOM_PATCHES,
+} from './doom-assets/doom-meta.js';
+
+(async function () {
+  'use strict';
+
+  // ─── DOM refs ───
+  const canvas      = document.getElementById('game');
+  const terminalEl  = document.getElementById('uac-terminal');
+  const formEl      = document.getElementById('enquiry');
+  const timerEl     = document.getElementById('timer');
+  const missing     = document.getElementById('missing-api');
+
+  const ctx = canvas.getContext('2d', { alpha: false });
+
+  // Feature detect. Chrome 138+ with canvas-draw-element flag exposes
+  // ctx.drawElementImage. Older builds had ctx.drawElement (pre-rename).
+  const hasDrawElement =
+    typeof ctx.drawElementImage === 'function' ||
+    typeof ctx.drawElement === 'function';
+
+  if (!hasDrawElement) {
+    missing.classList.add('visible');
+    return;
+  }
+
+  // Alias so code is stable across rename.
+  const drawElementImage = ctx.drawElementImage
+    ? ctx.drawElementImage.bind(ctx)
+    : ctx.drawElement.bind(ctx);
+  const getElementTransform = ctx.getElementTransform
+    ? ctx.getElementTransform.bind(ctx)
+    : null;
+
+  // ─── Size the main canvas to the viewport ───
+  // The canvas has logical pixels equal to CSS px * devicePixelRatio. Doom
+  // renders to a fixed 320×200 framebuffer; we scale it to fit the viewport
+  // integer-pixel style. The form is drawn in logical canvas coords.
+  const dpr = Math.min(window.devicePixelRatio || 1, 2);
+
+  function sizeCanvas() {
+    canvas.width  = Math.floor(innerWidth  * dpr);
+    canvas.height = Math.floor(innerHeight * dpr);
+    canvas.style.width  = innerWidth  + 'px';
+    canvas.style.height = innerHeight + 'px';
+  }
+  sizeCanvas();
+  addEventListener('resize', sizeCanvas);
+
+  // ─── Doom framebuffer lives on an offscreen canvas ───
+  // doom.wasm imports `drawFrame(ptr)` which expects to putImageData to a
+  // canvas sized to Doom's framebuffer. We give it a dedicated offscreen one,
+  // then blit-and-scale it into the real #game canvas every composite tick.
+  const doomCanvas = document.createElement('canvas');
+  doomCanvas.width = 320; doomCanvas.height = 200;
+  const doomCtx = doomCanvas.getContext('2d', { alpha: false });
+  let doomImageData = null;
+  let doomReady = false;
+  let doomW = 320, doomH = 200;
+
+  // ─── Load and start doom.wasm ───
+  let moduleMemory = null;
+  let doomExports  = null;
+
+  function readUtf8(mem, ptr, len) {
+    const bytes = new Uint8Array(mem.buffer, ptr, len);
+    return new TextDecoder('utf-8', { fatal: false }).decode(bytes);
+  }
+
+  const imports = {
+    loading: {
+      onGameInit(width, height) {
+        doomW = width; doomH = height;
+        doomCanvas.width  = width;
+        doomCanvas.height = height;
+        doomImageData = doomCtx.createImageData(width, height);
+        doomReady = true;
+        console.log(`[doom] init ${width}×${height}`);
+      },
+      // Use the shareware WAD baked into doom.wasm — zero bytes to ship.
+      wadSizes()  { /* no WADs provided — default to embedded DOOM1.WAD shareware */ },
+      readWads()  {},
+    },
+    ui: {
+      drawFrame(ptr) {
+        if (!doomImageData) return;
+        // Doom writes 32-bit BGRA little-endian → byte order on disk is B,G,R,A.
+        // ImageData wants RGBA.
+        const src = new Uint8Array(moduleMemory.buffer, ptr, doomW * doomH * 4);
+        const dst = doomImageData.data;
+        for (let i = 0, n = doomW * doomH * 4; i < n; i += 4) {
+          dst[i    ] = src[i + 2];
+          dst[i + 1] = src[i + 1];
+          dst[i + 2] = src[i    ];
+          dst[i + 3] = 255;
+        }
+        doomCtx.putImageData(doomImageData, 0, 0);
+      },
+    },
+    runtimeControl: {
+      timeInMilliseconds() { return BigInt(Math.trunc(performance.now())); },
+    },
+    console: {
+      onInfoMessage(ptr, len) { console.log(`[doom] ${readUtf8(moduleMemory, ptr, len)}`); },
+      onErrorMessage(ptr, len) { console.error(`[doom] ${readUtf8(moduleMemory, ptr, len)}`); },
+    },
+    gameSaving: {
+      sizeOfSaveGame() { return 0; },
+      readSaveGame()   { return 0; },
+      writeSaveGame()  { return 0; },
+    },
+  };
+
+  let wasmResult;
+  try {
+    wasmResult = await WebAssembly.instantiateStreaming(
+      fetch('doom-assets/doom.wasm'),
+      imports
+    );
+  } catch (e) {
+    console.error('Failed to load doom.wasm', e);
+    missing.classList.add('visible');
+    missing.querySelector('.box').innerHTML =
+      '<h2>DOOM.WASM FAILED TO LOAD</h2><p>Check the console for details.</p>';
+    return;
+  }
+
+  doomExports = wasmResult.instance.exports;
+  moduleMemory = doomExports.memory;
+
+  // ─────────────────────────────────────────────────────────────
+  // PHASE 2 — paint the live HTML form onto a real Doom wall texture.
+  //
+  // Strategy
+  // ────────
+  // doom.wasm has DOOM1.WAD baked into its linear memory as a data segment.
+  // For each wall texture Doom renders, the renderer calls W_CacheLumpNum
+  // on the backing patch lump — that Z_Mallocs a heap buffer and copies the
+  // patch bytes in. R_GetColumn then indexes straight into that cache for
+  // single-patch or fast-path textures (which our targets all are).
+  //
+  // So: to replace the pixels Doom draws on a wall, we only need the address
+  // of the cached copy of the patch. We find it with a sentinel trick:
+  //
+  //   1. Scan linear memory for the "IWAD" magic to locate the embedded WAD.
+  //   2. Before initGame, stamp a unique 8-byte sentinel into the first
+  //      pixel bytes of column 0 of each target patch in the source WAD.
+  //   3. Call initGame. Doom loads E1M1 and R_PrecacheLevel calls
+  //      W_CacheLumpNum on every patch used on the level — which copies our
+  //      sentinel-poisoned bytes into freshly allocated heap buffers.
+  //   4. Scan linear memory for each sentinel, skipping the known source
+  //      position. Whatever matches is the cached copy.
+  //   5. Restore the sentinel bytes in BOTH source and cache, so the wall
+  //      shows its original pixels until the form overlay writes over them.
+  //   6. Each frame: capture the form via drawElementImage, quantise to the
+  //      Doom palette, write those bytes into the cache at the configured
+  //      sub-region. Everything outside the sub-region stays pristine.
+  // ─────────────────────────────────────────────────────────────
+
+  // ── Composite textures ──
+  // Some Doom textures are built from multiple patches side-by-side. When we
+  // target one of those, we have to write pixel x into whichever patch backs
+  // that column of the logical texture, offsetting by the patch's originx.
+  // STARTAN3 (128x128) = SW19_2 at originx 0 + SW19_1 at originx 64.
+  //
+  // PIPE2 is our form target: an unused (in E1M1) TEXTURE1 entry that we
+  // rewire at runtime to be backed by W17_1 (232×112). We then point
+  // E1M1's sidedef 6 (linedef 6: 160 units long, (960,-3648)→(832,-3552),
+  // the angled wall just past the spawn room) at it.
+  //
+  // CRITICAL: the texture must have a power-of-2 width or Doom's
+  // texturewidthmask wraps around mid-wall:
+  //   j = 1; while (j*2 <= width) j <<= 1;  mask = j - 1;
+  // For width=232, mask=127 → wall col 159 wraps to col 31 (the 80%
+  // tiling we hit with DOOR1). PIPE2 is 256 wide → mask=255, no wrap.
+  //
+  // PIPE2 already has patchcount=2 in its TEXTURE1 entry (42 bytes), so
+  // we can rewrite both patches in place without overrunning the next
+  // entry. We point both at W17_1 (originx=0 covers cols 0..231,
+  // originx=232 covers cols 232..255 by re-using W17_1's first 24 cols).
+  // No overlap → both columns stay single-coverage → R_GenerateLookup
+  // keeps the fast path: writes to W17_1's W_CacheLumpNum buffer appear
+  // instantly on the rendered wall.
+  //
+  // Height drops 128 → 112 to match W17_1; declaring 128 would let Doom
+  // sample garbage past the patch's column post.
+  // See mutatePipe2ForForm + mutateE1M1SidedefsForForm below.
+  const COMPOSITE_TEXTURES = {
+    PIPE2: {
+      width:  256,
+      height: 112,
+      patches: [
+        { patchName: 'W17_1', originx: 0   },
+        { patchName: 'W17_1', originx: 232 },
+      ],
+    },
+    STARTAN3: {
+      width:  128,
+      height: 128,
+      patches: [
+        { patchName: 'SW19_2', originx: 0  },
+        { patchName: 'SW19_1', originx: 64 },
+      ],
+    },
+  };
+
+  // Current render target — swap at runtime via window.__doom.setTarget.
+  // `textureName` names either a single patch (e.g. 'DOOR2_5') or a composite
+  // texture (e.g. 'DOOR1', 'STARTAN3'). (x, y, w, h) is the sub-region of
+  // that logical texture the form gets rasterised into; pixels outside it
+  // keep their original Doom bytes.
+  //
+  // PIPE2 is the repurposed TEXTURE1 entry we've rewired to be backed by
+  // W17_1 (232×112) at originx=0 and originx=232. After
+  // mutateE1M1SidedefsForForm rewrites sidedef 6's middle from STARTAN3
+  // → PIPE2, the form renders on the 160×72 angled wall segment to the
+  // player's right-front. Form covers cols 0..159 of W17_1's cache; cols
+  // 160..255 of the texture are unsampled (wall is only 160 wide).
+  // Vanilla DOOR2_5 → DOOR3 still exists as a normal door behind the
+  // player. PIPE2 is unused in E1M1 vanilla, so the rewrite is invisible
+  // to the rest of the level.
+  const formTarget = {
+    textureName: 'PIPE2',
+    x: 0,
+    y: 0,
+    w: 160,
+    h: 72,
+  };
+
+  function currentTexture() {
+    const n = formTarget.textureName;
+    if (COMPOSITE_TEXTURES[n]) return COMPOSITE_TEXTURES[n];
+    // Single-patch textures: synthesise a composite descriptor on the fly.
+    const patch = DOOM_PATCHES.find(p => p.name === n);
+    if (!patch) return null;
+    return {
+      width:  patch.width,
+      height: patch.height,
+      patches: [{ patchName: n, originx: 0 }],
+    };
+  }
+
+  // Unique 8-byte sentinels — one per candidate patch. Arbitrary but distinct.
+  const SENTINELS = {
+    DOOR2_5: [0xD0, 0x06, 0xDE, 0xAD, 0xBE, 0xEF, 0x19, 0x93],
+    DOOR2_4: [0xD0, 0x06, 0xDE, 0xAD, 0xBE, 0xEF, 0x19, 0x96],
+    SW19_1:  [0x5F, 0x19, 0xC0, 0xDE, 0xCA, 0xFE, 0x19, 0x94],
+    SW19_2:  [0x5F, 0x19, 0xC0, 0xDE, 0xCA, 0xFE, 0x19, 0x95],
+    W17_1:   [0x77, 0x17, 0xBA, 0xDC, 0x0F, 0xFE, 0xE0, 0xDD],
+  };
+
+  // Runtime state per patch. Filled in during setup.
+  const patchState = new Map();
+  for (const p of DOOM_PATCHES) {
+    patchState.set(p.name, {
+      meta: p,
+      srcMemOfs:     -1,  // byte offset in linear memory of the source lump
+      cacheMemOfs:   -1,  // byte offset in linear memory of cached copy
+      sentinel:      SENTINELS[p.name],
+      originalSentinelBytes: Array.from(p.originalBytes.subarray(
+        p.columnOfs[0] + 3,
+        p.columnOfs[0] + 3 + 8,
+      )),
+    });
+  }
+
+  function memU8() { return new Uint8Array(moduleMemory.buffer); }
+
+  // ── 1. Find the IWAD inside linear memory ────────────────────
+  function findIwadInMemory() {
+    const u8 = memU8();
+    // "IWAD" = 0x49 0x57 0x41 0x44
+    for (let i = 0; i < u8.length - 12; i++) {
+      if (u8[i] !== 0x49) continue;
+      if (u8[i+1] !== 0x57 || u8[i+2] !== 0x41 || u8[i+3] !== 0x44) continue;
+      const numLumps = u8[i+4] | (u8[i+5]<<8) | (u8[i+6]<<16) | (u8[i+7]<<24);
+      const dirOfs   = u8[i+8] | (u8[i+9]<<8) | (u8[i+10]<<16) | (u8[i+11]<<24);
+      if (numLumps <= 0 || numLumps > 20000) continue;
+      if (i + dirOfs + numLumps * 16 > u8.length) continue;
+      return i;
+    }
+    return -1;
+  }
+
+  const iwadMemOfs = findIwadInMemory();
+  if (iwadMemOfs < 0) {
+    console.error('[doom] IWAD not found in wasm linear memory');
+  } else {
+    console.log(`[doom] IWAD in memory at 0x${iwadMemOfs.toString(16)}`);
+  }
+
+  // ── Lump directory lookup (runs against the embedded WAD in linear mem) ──
+  // We use this to find TEXTURE1 and PNAMES so we can mutate DOOR3's entry
+  // BEFORE initGame, giving the door a 128×128 backing patch instead of its
+  // vanilla 64×72.
+  function findWadLump(name) {
+    if (iwadMemOfs < 0) return null;
+    const u8 = memU8();
+    const numLumps =
+      u8[iwadMemOfs+4] | (u8[iwadMemOfs+5]<<8) |
+      (u8[iwadMemOfs+6]<<16) | (u8[iwadMemOfs+7]<<24);
+    const dirOfs =
+      u8[iwadMemOfs+8] | (u8[iwadMemOfs+9]<<8) |
+      (u8[iwadMemOfs+10]<<16) | (u8[iwadMemOfs+11]<<24);
+    const dirBase = iwadMemOfs + dirOfs;
+    const want = name.toUpperCase();
+    for (let i = 0; i < numLumps; i++) {
+      const e = dirBase + i * 16;
+      let lumpName = '';
+      for (let k = 0; k < 8; k++) {
+        const c = u8[e + 8 + k];
+        if (!c) break;
+        lumpName += String.fromCharCode(c);
+      }
+      if (lumpName.toUpperCase() === want) {
+        const ofs =
+          u8[e]     | (u8[e+1]<<8) |
+          (u8[e+2]<<16) | (u8[e+3]<<24);
+        const size =
+          u8[e+4]   | (u8[e+5]<<8) |
+          (u8[e+6]<<16) | (u8[e+7]<<24);
+        return { ofs: iwadMemOfs + ofs, size };
+      }
+    }
+    return null;
+  }
+
+  // ── Helper: look up a patch's index in PNAMES ──
+  function findPnameIndex(patchName) {
+    const u8 = memU8();
+    const pnames = findWadLump('PNAMES');
+    if (!pnames) return -1;
+    const nPatches =
+      u8[pnames.ofs]     | (u8[pnames.ofs+1]<<8) |
+      (u8[pnames.ofs+2]<<16) | (u8[pnames.ofs+3]<<24);
+    const want = patchName.toUpperCase();
+    for (let i = 0; i < nPatches; i++) {
+      const nameBase = pnames.ofs + 4 + i * 8;
+      let n = '';
+      for (let k = 0; k < 8; k++) {
+        const c = u8[nameBase + k];
+        if (!c) break;
+        n += String.fromCharCode(c);
+      }
+      if (n.toUpperCase() === want) return i;
+    }
+    return -1;
+  }
+
+  // ── Find a TEXTURE1 entry by name ──
+  // Returns the absolute byte offset of the entry inside linear memory,
+  // so the caller can peek/poke fields directly. null if not found.
+  function findTexture1Entry(name) {
+    const u8 = memU8();
+    const tex1 = findWadLump('TEXTURE1');
+    if (!tex1) return null;
+    const t1 = tex1.ofs;
+    const numTex = u8[t1] | (u8[t1+1]<<8) | (u8[t1+2]<<16) | (u8[t1+3]<<24);
+    const want = name.toUpperCase();
+    for (let i = 0; i < numTex; i++) {
+      const idxOfs = t1 + 4 + i * 4;
+      const relOfs =
+        u8[idxOfs]     | (u8[idxOfs+1]<<8) |
+        (u8[idxOfs+2]<<16) | (u8[idxOfs+3]<<24);
+      const entry = t1 + relOfs;
+      let n = '';
+      for (let k = 0; k < 8; k++) {
+        const c = u8[entry + k];
+        if (!c) break;
+        n += String.fromCharCode(c);
+      }
+      if (n.toUpperCase() === want) return entry;
+    }
+    return null;
+  }
+
+  // ── Rewire PIPE2's TEXTURE1 entry to be backed by W17_1 ──
+  // PIPE2 is an UNUSED (in E1M1) 256×128 texture with patchcount=2 — its
+  // 42-byte TEXTURE1 entry already has room for two patch records, so we
+  // can rewrite both in place without overrunning the next entry.
+  //
+  // CRITICAL: width must stay a power of 2. Doom builds texturewidthmask
+  // by halving down from texture->width to the next power of 2 ≤ width:
+  //   j = 1; while (j*2 <= width) j <<= 1;  mask = j - 1;
+  // For width=232 → mask=127 (wall col 159 wraps to col 31 — the 80%
+  // tiling we hit with DOOR1). PIPE2 is already 256 wide → mask=255, so
+  // wall cols 0..159 sample directly without wrap.
+  //
+  // Both patch slots become W17_1 — one at originx=0 (covers cols
+  // 0..231), one at originx=232 (covers cols 232..255 by wrapping into
+  // W17_1's first 24 cols). They don't overlap, so R_GenerateLookup
+  // marks every column as single-coverage and stays on the fast path:
+  // writes to W17_1's W_CacheLumpNum buffer appear instantly.
+  //
+  // Height drops 128 → 112 to match W17_1. Declaring 128 with a 112-tall
+  // patch lets Doom read past the column post into garbage at rows
+  // 112..127.
+  //
+  // Must run BEFORE initGame so R_InitTextures builds runtime sampling
+  // state using the new dimensions and patch references.
+  function mutatePipe2ForForm() {
+    if (iwadMemOfs < 0) return false;
+    const u8 = memU8();
+    const w17Index = findPnameIndex('W17_1');
+    if (w17Index < 0) { console.warn('[doom] W17_1 not in PNAMES'); return false; }
+    const entry = findTexture1Entry('PIPE2');
+    if (!entry) { console.warn('[doom] PIPE2 not in TEXTURE1'); return false; }
+
+    // Sanity-check existing dimensions and patchcount before rewriting.
+    const w = u8[entry+12] | (u8[entry+13]<<8);
+    const h = u8[entry+14] | (u8[entry+15]<<8);
+    const nPat = u8[entry+20] | (u8[entry+21]<<8);
+    if (w !== 256 || h !== 128) {
+      console.warn(`[doom] PIPE2 unexpected dims ${w}×${h} (wanted 256×128)`);
+      return false;
+    }
+    if (nPat !== 2) {
+      console.warn(`[doom] PIPE2 has patchcount ${nPat} (wanted 2)`);
+      return false;
+    }
+
+    // Texture1 entry layout:
+    //   +0..+7   name (8 bytes)
+    //   +8..+11  masked (int32)
+    //   +12      width (int16)         ← stays 256
+    //   +14      height (int16)        ← 128 → 112
+    //   +16..+19 columndirectory (unused)
+    //   +20      patchcount (int16)    ← stays 2
+    //   +22..+31 patch[0]: originx(2) originy(2) patchIdx(2) stepdir(2) colormap(2)
+    //   +32..+41 patch[1]: same shape
+    u8[entry + 14] = 112 & 0xff;
+    u8[entry + 15] = (112 >> 8) & 0xff;
+
+    // Patch[0]: originx=0, originy=0, patchIdx=W17_1, stepdir=0, colormap=0.
+    u8[entry + 22] = 0; u8[entry + 23] = 0;       // originx
+    u8[entry + 24] = 0; u8[entry + 25] = 0;       // originy
+    u8[entry + 26] = w17Index & 0xff;             // patchIdx
+    u8[entry + 27] = (w17Index >> 8) & 0xff;
+    u8[entry + 28] = 0; u8[entry + 29] = 0;       // stepdir
+    u8[entry + 30] = 0; u8[entry + 31] = 0;       // colormap
+
+    // Patch[1]: originx=232, originy=0, patchIdx=W17_1, stepdir=0, colormap=0.
+    u8[entry + 32] = 232 & 0xff; u8[entry + 33] = (232 >> 8) & 0xff;
+    u8[entry + 34] = 0; u8[entry + 35] = 0;
+    u8[entry + 36] = w17Index & 0xff;
+    u8[entry + 37] = (w17Index >> 8) & 0xff;
+    u8[entry + 38] = 0; u8[entry + 39] = 0;
+    u8[entry + 40] = 0; u8[entry + 41] = 0;
+
+    console.log(
+      `[doom] PIPE2 rewired to 256×112 backed by W17_1×2 ` +
+      `(pnames[${w17Index}] @ originx 0 + 232)`,
+    );
+    return true;
+  }
+
+  // ── Find E1M1's SIDEDEFS lump in memory ──
+  // The WAD has 36 map SIDEDEFS lumps (E1M1..E3M9). findWadLump by name
+  // returns the first match, which may or may not be E1M1's. We locate
+  // E1M1 by searching for the marker lump ("E1M1"), then grab the third
+  // lump after it (THINGS, LINEDEFS, SIDEDEFS).
+  function findE1M1SideDefs() {
+    if (iwadMemOfs < 0) return null;
+    const u8 = memU8();
+    const numLumps =
+      u8[iwadMemOfs+4] | (u8[iwadMemOfs+5]<<8) |
+      (u8[iwadMemOfs+6]<<16) | (u8[iwadMemOfs+7]<<24);
+    const dirOfs =
+      u8[iwadMemOfs+8] | (u8[iwadMemOfs+9]<<8) |
+      (u8[iwadMemOfs+10]<<16) | (u8[iwadMemOfs+11]<<24);
+    const dirBase = iwadMemOfs + dirOfs;
+    let e1m1Idx = -1;
+    for (let i = 0; i < numLumps; i++) {
+      const e = dirBase + i * 16;
+      let n = '';
+      for (let k = 0; k < 8; k++) {
+        const c = u8[e + 8 + k];
+        if (!c) break;
+        n += String.fromCharCode(c);
+      }
+      if (n.toUpperCase() === 'E1M1') { e1m1Idx = i; break; }
+    }
+    if (e1m1Idx < 0) return null;
+    // SIDEDEFS is 3 lumps after E1M1 (THINGS, LINEDEFS, SIDEDEFS).
+    const sdEntry = dirBase + (e1m1Idx + 3) * 16;
+    const ofs =
+      u8[sdEntry]     | (u8[sdEntry+1]<<8) |
+      (u8[sdEntry+2]<<16) | (u8[sdEntry+3]<<24);
+    const size =
+      u8[sdEntry+4]   | (u8[sdEntry+5]<<8) |
+      (u8[sdEntry+6]<<16) | (u8[sdEntry+7]<<24);
+    return { ofs: iwadMemOfs + ofs, size };
+  }
+
+  // ── Rewrite E1M1 sidedef 6's middle texture to PIPE2 ──
+  // Sidedef 6 is the middle face of linedef 6, which runs from
+  // (960,-3648) to (832,-3552) — the angled wall just west of (and
+  // continuing from) sidedef 4. It's 160 units long, set in sector 38
+  // (floor=0, ceil=72). The wall is NOT axis-aligned — it recedes into
+  // the distance northwest of the player — so its on-screen quad is a
+  // proper trapezoid (tall on the left, short on the right).
+  //
+  // SIDEDEFS entry format (30 bytes):
+  //   +0  xoff     (int16)
+  //   +2  yoff     (int16)
+  //   +4  upper    (8 bytes, ASCII, null-padded)
+  //   +12 lower    (8 bytes)
+  //   +20 middle   (8 bytes) ← we rewrite this
+  //   +28 sector   (uint16)
+  //
+  // Must run BEFORE initGame so P_LoadSideDefs picks up PIPE2 when it
+  // parses the lump.
+  function mutateE1M1SidedefsForForm() {
+    const lump = findE1M1SideDefs();
+    if (!lump) { console.warn('[doom] E1M1 SIDEDEFS not found'); return false; }
+    const u8 = memU8();
+    const SD_SIZE = 30;
+    const target = 6;  // sidedef index
+    const base = lump.ofs + target * SD_SIZE;
+    // Sanity check: current middle should be STARTAN3.
+    let cur = '';
+    for (let k = 0; k < 8; k++) {
+      const c = u8[base + 20 + k];
+      if (!c) break;
+      cur += String.fromCharCode(c);
+    }
+    if (cur.toUpperCase() !== 'STARTAN3') {
+      console.warn(`[doom] E1M1 sidedef ${target} unexpected middle '${cur}' (wanted STARTAN3)`);
+      return false;
+    }
+    // Write "PIPE2\0\0\0".
+    const name = 'PIPE2';
+    for (let k = 0; k < 8; k++) {
+      u8[base + 20 + k] = k < name.length ? name.charCodeAt(k) : 0;
+    }
+    console.log(`[doom] E1M1 sidedef ${target} middle: STARTAN3 → PIPE2`);
+    return true;
+  }
+
+  mutatePipe2ForForm();
+  mutateE1M1SidedefsForForm();
+
+  // NOTE: widening a wall's world-space width by mutating VERTEXES in
+  // place was attempted and rejected. The approach works mechanically
+  // but the BSP (NODES/SSECTORS/SEGS) was authored for the original
+  // geometry and goes stale. Doom's visibility determination ends up
+  // painting the wrong texture on adjacent wall segments in the view
+  // frustum. See tools/e1m1-door-geom.mjs for the vertex layout and
+  // tools/doom-pw-corners.mjs for the red-fill scan that exposed the
+  // leak.
+
+  // ── 2. Sanity-check each patch's source bytes & plant sentinels ──
+  if (iwadMemOfs >= 0) {
+    const u8 = memU8();
+    for (const [name, state] of patchState) {
+      const src = iwadMemOfs + state.meta.wadRelOfs;
+      state.srcMemOfs = src;
+      // Verify first 16 bytes of the source match our known originalBytes.
+      let ok = true;
+      for (let k = 0; k < 16; k++) {
+        if (u8[src + k] !== state.meta.originalBytes[k]) { ok = false; break; }
+      }
+      if (!ok) {
+        console.error(`[doom] ${name} source bytes mismatch at 0x${src.toString(16)}`);
+        continue;
+      }
+      // Stamp the sentinel into col-0's first 8 pixel bytes.
+      const stampAt = src + state.meta.columnOfs[0] + 3;
+      for (let k = 0; k < 8; k++) u8[stampAt + k] = state.sentinel[k];
+    }
+  }
+
+  // ── 3. Locate the cached copies (called after initGame / first tick) ──
+  function findPatchCaches() {
+    const u8 = memU8();
+    let allFound = true;
+    for (const [name, state] of patchState) {
+      if (state.cacheMemOfs >= 0) continue;
+      if (state.srcMemOfs < 0) { allFound = false; continue; }
+      const s = state.sentinel;
+      const skipAt = state.srcMemOfs + state.meta.columnOfs[0] + 3;
+      let found = -1;
+      // Fast first-byte scan, verify full 8 bytes on hit.
+      for (let i = 0, n = u8.length - 8; i < n; i++) {
+        if (u8[i] !== s[0]) continue;
+        if (i === skipAt) continue;
+        if (u8[i+1] !== s[1] || u8[i+2] !== s[2] || u8[i+3] !== s[3] ||
+            u8[i+4] !== s[4] || u8[i+5] !== s[5] || u8[i+6] !== s[6] ||
+            u8[i+7] !== s[7]) continue;
+        found = i;
+        break;
+      }
+      if (found < 0) { allFound = false; continue; }
+      state.cacheMemOfs = found - (state.meta.columnOfs[0] + 3);
+      console.log(`[doom] ${name} cache at 0x${state.cacheMemOfs.toString(16)}`);
+      // Restore the sentinel bytes in both cache and source.
+      for (let k = 0; k < 8; k++) {
+        u8[found + k] = state.originalSentinelBytes[k];
+        u8[skipAt + k] = state.originalSentinelBytes[k];
+      }
+    }
+    return allFound;
+  }
+
+  // ── 4. Form capture → palette quantisation → cache overlay ──
+
+  // Capture scratch canvas.
+  //
+  // The *live* form capture happens on the MAIN canvas — drawElementImage
+  // only accepts elements that are immediate children of the canvas owning
+  // the 2D context, and terminalEl is a child of the visible <canvas>. The
+  // element's native size is exactly FORM_NATIVE (128 CSS px = 128 texture
+  // px), so we capture at 1:1 with no supersampling. composite() wipes the
+  // scratch region with the Doom framebuffer before anything reaches the
+  // display.
+  //
+  // `down` is kept at exactly the patch rect size; it's what we
+  // getImageData() from and quantise into palette indices.
+  const SUPERSAMPLE = 1;
+  const down = document.createElement('canvas');
+  let downCtx = down.getContext('2d', { willReadFrequently: true, alpha: false });
+
+  function resizeScratch(w, h) {
+    if (down.width !== w || down.height !== h) {
+      down.width = w; down.height = h;
+      downCtx = down.getContext('2d', { willReadFrequently: true, alpha: false });
+    }
+  }
+  resizeScratch(formTarget.w, formTarget.h);
+
+  // Nearest-palette lookup table, built lazily. Key = (r>>3)<<10 | (g>>3)<<5 | (b>>3).
+  // 32×32×32 = 32768 entries; each is a Doom palette index (uint8).
+  let paletteLUT = null;
+  function buildPaletteLUT() {
+    if (paletteLUT) return;
+    paletteLUT = new Uint8Array(32768);
+    for (let rb = 0; rb < 32; rb++) {
+      for (let gb = 0; gb < 32; gb++) {
+        for (let bb = 0; bb < 32; bb++) {
+          const r = (rb << 3) | 4;
+          const g = (gb << 3) | 4;
+          const b = (bb << 3) | 4;
+          let best = 0, bestD = Infinity;
+          for (let p = 0; p < 256; p++) {
+            const pr = DOOM_PALETTE[p*3];
+            const pg = DOOM_PALETTE[p*3+1];
+            const pb = DOOM_PALETTE[p*3+2];
+            const dr = pr - r, dg = pg - g, db = pb - b;
+            const d = dr*dr + dg*dg + db*db;
+            if (d < bestD) { bestD = d; best = p; }
+          }
+          paletteLUT[(rb<<10) | (gb<<5) | bb] = best;
+        }
+      }
+    }
+    console.log('[doom] palette LUT built');
+  }
+  buildPaletteLUT();
+
+  function quantise(r, g, b) {
+    return paletteLUT[((r>>3)<<10) | ((g>>3)<<5) | (b>>3)];
+  }
+
+  // Every Doom tick — called at the START of composite(), before the
+  // blackfill/framebuffer-blit wipes the canvas — this function paints
+  // the live form subtree into a scratch region at the top-left of the
+  // MAIN canvas via drawElementImage(), then immediately reads those
+  // pixels back via drawImage(canvas, …) into an offscreen downsample
+  // buffer. Composite() then wipes the scratch region and paints the
+  // Doom framebuffer over the top, so nothing ever reaches the screen.
+  //
+  // drawElementImage() MUST be called on the 2D context of the canvas
+  // whose immediate child the target element is — terminalEl is a child
+  // of the visible <canvas>, so we have to use its ctx. No offscreen.
+  //
+  // For composite textures (e.g. STARTAN3 = SW19_2|SW19_1) each logical
+  // column is dispatched to whichever backing patch owns that column.
+  let overlayEnabled = true;
+  let framesSinceSetup = 0;
+  // Eyeball fudge: the DOM element sits on the wall trapezoid at the
+  // right size (matrix3d derived from the wall corners), but the
+  // drawElementImage capture comes out looking visually a bit bigger
+  // than the DOM element on the wall — the fields in the texture don't
+  // line up with the hit-test boxes. Scaling the captured element down
+  // inside its 160×72 texture region before it's written into the
+  // W17_1 patch cache pulls the two back into alignment. Tweak live
+  // via window.__doom.overlay.shrink (0..1).
+  let formShrink = 0.8;
+  const formDraw = ctx.drawElementImage
+    ? ctx.drawElementImage.bind(ctx)
+    : ctx.drawElement.bind(ctx);
+  // Off-screen 2D context used purely to measure text widths for the
+  // synthetic caret. drawElementImage doesn't capture the native caret
+  // (it's a compositor-level draw, not part of the layout tree), so we
+  // paint our own — a 2 Hz blinking red bar positioned at the end of
+  // the focused input's current value.
+  const caretMeasureCtx = document.createElement('canvas').getContext('2d');
+  caretMeasureCtx.font = '8px Silkscreen, monospace';
+  function overlayForm() {
+    if (!overlayEnabled) return;
+    const tex = currentTexture();
+    if (!tex) return;
+
+    // Verify every backing patch's cache has been located.
+    for (const p of tex.patches) {
+      const st = patchState.get(p.patchName);
+      if (!st || st.cacheMemOfs < 0) return;
+    }
+
+    const rectW = Math.min(formTarget.w, tex.width  - formTarget.x);
+    const rectH = Math.min(formTarget.h, tex.height - formTarget.y);
+    if (rectW <= 0 || rectH <= 0) return;
+
+    resizeScratch(rectW, rectH);
+
+    // ── Capture live DOM → main canvas scratch region ──
+    // drawElementImage pipes through the CTM, so scale the context so the
+    // element's natural CSS bounding box maps to our capW × capH scratch
+    // region anchored at (0, 0). Supersampling gives the downsample step
+    // extra detail to work with — text stays legible at 128×128.
+    const capW = rectW * SUPERSAMPLE;
+    const capH = rectH * SUPERSAMPLE;
+    const elW = terminalEl.offsetWidth  || formTarget.w;
+    const elH = terminalEl.offsetHeight || formTarget.h;
+
+    ctx.save();
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, capW, capH);
+    // Base CTM scale maps the element's native 160×72 CSS box into the
+    // capW×capH scratch region. Multiplying by formShrink draws the
+    // element at <100% of that region, leaving a black frame around
+    // it — which carries through the downsample straight into the
+    // texture and shrinks what the player sees on the wall.
+    ctx.scale((capW / elW) * formShrink, (capH / elH) * formShrink);
+    // The element is normally `transform: translate(X, Y)` so its DOM
+    // bounding rect sits over the door. drawElementImage() honours the
+    // element's CSS transform when rasterising — if we leave the translate
+    // in, the form is drawn at (X, Y) on the main canvas instead of at
+    // (0, 0), and our scratch readback grabs empty pixels. Temporarily
+    // zero the transform for the duration of the draw. Since CSS
+    // transforms are composite-only (no layout), this is cheap and
+    // doesn't disturb the element's offsetWidth/Height.
+    const savedTransform = terminalEl.style.transform;
+    if (savedTransform) terminalEl.style.transform = 'none';
+    try {
+      formDraw(terminalEl, 0, 0);
+    } catch (e) {
+      ctx.restore();
+      if (savedTransform) terminalEl.style.transform = savedTransform;
+      if (!overlayForm._warned) {
+        console.error('[doom] drawElementImage failed in overlayForm:', e.message);
+        overlayForm._warned = true;
+      }
+      return;
+    }
+    if (savedTransform) terminalEl.style.transform = savedTransform;
+    ctx.restore();
+
+    // Downsample the scratch region (on the main canvas) into `down`.
+    downCtx.imageSmoothingEnabled = true;
+    downCtx.imageSmoothingQuality = 'high';
+    downCtx.drawImage(canvas, 0, 0, capW, capH, 0, 0, rectW, rectH);
+
+    // ── Synthetic caret ──
+    // Blink at 2 Hz (on for 500 ms, off for 500 ms) when an input inside
+    // the terminal holds focus. Position is the focused input's top-left
+    // in terminal-local coordinates (via offsetTop/offsetLeft), plus the
+    // pixel width of its value up to the selection point measured with
+    // the same Silkscreen 8 px font the wall texture actually renders in,
+    // then scaled by formShrink since the form is drawn into the down
+    // canvas at that same scale.
+    const act = document.activeElement;
+    if (act && terminalEl.contains(act) &&
+        (act.tagName === 'INPUT' || act.tagName === 'TEXTAREA') &&
+        (Math.floor(performance.now() / 500) & 1) === 0) {
+      let ox = 0, oy = 0, n = act;
+      while (n && n !== terminalEl) {
+        ox += n.offsetLeft;
+        oy += n.offsetTop;
+        n = n.offsetParent;
+      }
+      const selEnd = act.selectionEnd ?? act.value.length;
+      const textW = caretMeasureCtx.measureText(act.value.slice(0, selEnd)).width;
+      // Input CSS: 1 px border + 1 px padding = 2 px inside-offset before
+      // the text begins. Caret is 1 px wide, 6 px tall in element space.
+      // Multiply everything by formShrink to land on the shrunken form
+      // image in the down canvas.
+      const cx = (ox + 2 + textW) * formShrink;
+      const cy = (oy + 2) * formShrink;
+      const ch = 6 * formShrink;
+      downCtx.fillStyle = '#ff3b1f';
+      downCtx.fillRect(Math.round(cx), Math.round(cy), 1, Math.max(1, Math.round(ch)));
+    }
+
+    const img = downCtx.getImageData(0, 0, rectW, rectH).data;
+
+    // ── Punch bullet holes ──
+    // Each hole is a small jagged dark disc with a charred red rim.  We
+    // write it directly into the captured pixel buffer BEFORE the
+    // palette-quantise step, so the existing writer paints it into the
+    // wall texture with no special handling.
+    //
+    // d² ranges:
+    //   0        → pure black centre pixel
+    //   1..3     → near-black inner ring
+    //   4..6     → dark red inner rim
+    //   7..9     → scorched brown outer rim
+    for (const h of bulletHoles) {
+      for (let dy = -3; dy <= 3; dy++) {
+        const y = h.y + dy;
+        if (y < 0 || y >= rectH) continue;
+        for (let dx = -3; dx <= 3; dx++) {
+          const x = h.x + dx;
+          if (x < 0 || x >= rectW) continue;
+          const d2 = dx * dx + dy * dy;
+          if (d2 > 9) continue;
+          // Stippled outer ring — keeps the hole from looking like a
+          // perfect CSS circle after quantisation.
+          if (d2 > 6 && ((x + y + h.seed) & 1) === 0) continue;
+          const i = (y * rectW + x) * 4;
+          if (d2 < 1) {
+            img[i] = 0;   img[i+1] = 0;  img[i+2] = 0;
+          } else if (d2 < 4) {
+            img[i] = 12;  img[i+1] = 4;  img[i+2] = 2;
+          } else if (d2 < 7) {
+            img[i] = 48;  img[i+1] = 12; img[i+2] = 4;
+          } else {
+            img[i] = 72;  img[i+1] = 24; img[i+2] = 8;
+          }
+        }
+      }
+    }
+
+    const u8  = memU8();
+
+    // For each logical column of the target rect, find which backing patch
+    // owns it and write that column's pixels into the correct cache lump.
+    for (let dx = 0; dx < rectW; dx++) {
+      const texCol = formTarget.x + dx;
+
+      // Pick the backing patch whose [originx, originx+width) spans texCol.
+      let chosen = null;
+      for (const p of tex.patches) {
+        const st = patchState.get(p.patchName);
+        if (!st) continue;
+        const w = st.meta.width;
+        if (texCol >= p.originx && texCol < p.originx + w) {
+          chosen = { st, localCol: texCol - p.originx };
+          break;
+        }
+      }
+      if (!chosen) continue;
+
+      const { st, localCol } = chosen;
+      const { meta } = st;
+      const colBase = st.cacheMemOfs + meta.columnOfs[localCol] + 3 + formTarget.y;
+      const maxRows = Math.min(rectH, meta.height - formTarget.y);
+
+      for (let dy = 0; dy < maxRows; dy++) {
+        const i = (dy * rectW + dx) * 4;
+        u8[colBase + dy] = quantise(img[i], img[i+1], img[i+2]);
+      }
+    }
+  }
+
+  // ─── Bullet holes on the form ───
+  // Each time the player fires (KEY_FIRE / Control) we push a hole into
+  // this array.  overlayForm() paints the hole into the captured pixel
+  // buffer before quantisation, so it becomes part of the wall texture
+  // on the very next Doom tick — no wasm-side hack, no extra draw pass.
+  //
+  // Placement: we raycast the player's view direction against the wall's
+  // world-space segment and compute the exact texture-space UV the ray
+  // hits — so wherever the player aims and fires, that's where the hole
+  // lands on the form. Vanilla Doom has no pitch, so the vertical hit is
+  // always at view-eye height on the wall; the horizontal hit is the
+  // ray-segment intersection in the XY plane.
+  const bulletHoles = [];
+  let bulletHoleSeed = 1;
+
+  // Raycast player view → wall segment, return texture-space UV (in form
+  // pixels, 0..formTarget.w × 0..formTarget.h) or null if the crosshair
+  // doesn't actually intersect the wall.
+  function crosshairHitUV() {
+    const ps = getPlayerState();
+    if (!ps) return null;
+    const dx = Math.cos(ps.angleRad);
+    const dy = Math.sin(ps.angleRad);
+    const { v1, v2, zTop, zBot } = WALL_GEOM;
+    const wdx = v2.x - v1.x;
+    const wdy = v2.y - v1.y;
+    // Solve  v1 + s*(v2-v1) = (ps.x, ps.y) + t*(dx, dy)  in 2D.
+    //   [ wdx  -dx ] [s]   [ps.x - v1.x]
+    //   [ wdy  -dy ] [t] = [ps.y - v1.y]
+    const det = wdx * (-dy) - (-dx) * wdy;
+    if (Math.abs(det) < 1e-6) return null;   // ray parallel to wall
+    const rhsX = ps.x - v1.x;
+    const rhsY = ps.y - v1.y;
+    const s = ( (-dy) * rhsX - (-dx) * rhsY) / det;
+    const t = ( wdx  * rhsY -  wdy * rhsX) / det;
+    if (t <= 0) return null;               // wall behind player
+    if (s < 0 || s > 1) return null;       // crosshair off the wall
+    const viewz = ps.z + VIEW_HEIGHT;
+    if (viewz < zBot || viewz > zTop) return null;
+    // Doom texture U runs along the linedef from v1 → v2. Doom texture V
+    // runs from the top (ceiling = zTop) downward, so higher world-z
+    // maps to a smaller v_tex.
+    const u = s * formTarget.w;
+    const v = (zTop - viewz) * (formTarget.h / (zTop - zBot));
+    return { u, v };
+  }
+
+  function addBulletHole() {
+    // Default to centre-form if the ray doesn't hit (e.g. player has
+    // wandered to where the wall isn't in their FOV at all).
+    let cx = formTarget.w / 2, cy = formTarget.h / 2;
+    const hit = crosshairHitUV();
+    if (hit) { cx = hit.u; cy = hit.v; }
+    // Sum-of-three pseudo-gaussian gives a soft cluster without Math.log.
+    const g = () => (Math.random() + Math.random() + Math.random() - 1.5) * 3;
+    const x = Math.round(cx + g());
+    const y = Math.round(cy + g());
+    bulletHoles.push({
+      x: Math.max(2, Math.min(formTarget.w - 3, x)),
+      y: Math.max(2, Math.min(formTarget.h - 3, y)),
+      seed: bulletHoleSeed++,
+    });
+    // Cap history so a held-down fire button doesn't leak memory.
+    if (bulletHoles.length > 64) bulletHoles.shift();
+  }
+
+  // ─── Keyboard → Doom ───
+  // Strafe lives on A/D (not ,/.) so the comma and period can be typed
+  // into form inputs (e.g. "d.guy@gmail.com") without being swallowed
+  // by the game.  A/D match modern FPS muscle memory anyway.
+  const doomKey = new Map([
+    ['ArrowLeft',  doomExports.KEY_LEFTARROW],
+    ['ArrowRight', doomExports.KEY_RIGHTARROW],
+    ['ArrowUp',    doomExports.KEY_UPARROW],
+    ['ArrowDown',  doomExports.KEY_DOWNARROW],
+    ['a',          doomExports.KEY_STRAFE_L],
+    ['d',          doomExports.KEY_STRAFE_R],
+    ['Control',    doomExports.KEY_FIRE],
+    [' ',          doomExports.KEY_USE],
+    ['Shift',      doomExports.KEY_SHIFT],
+    ['Tab',        doomExports.KEY_TAB],
+    ['Escape',     doomExports.KEY_ESCAPE],
+    ['Enter',      doomExports.KEY_ENTER],
+    ['Backspace',  doomExports.KEY_BACKSPACE],
+    ['Alt',        doomExports.KEY_ALT],
+  ]);
+
+  function translateKey(ev) {
+    // Normalise single-char keys to lowercase so Shift+A still matches
+    // the 'a' entry (strafe-left while running, for example).
+    const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
+    if (doomKey.has(key)) return doomKey.get(key);
+    if (ev.key.length === 1) return ev.key.charCodeAt(0);
+    return null;
+  }
+
+  // Only forward keys to Doom when no form input is focused. That way the
+  // player can play Doom, click a form field, fill it in, click out, keep
+  // playing. Tab cycles between doom (no focus) and the form inputs.
+  function formHasFocus() {
+    const a = document.activeElement;
+    return a && terminalEl.contains(a);
+  }
+
+  // ─── Shoot-to-cycle form focus ───
+  // Because real-user pointer events don't reliably route to the form's
+  // layoutsubtree children in current Chromium (see Click routing block
+  // below), we bind focus advancement to the FIRE key instead. Each shot:
+  //   1. advances the cycle  (name → email → concern → submit → name …)
+  //   2. records a bullet hole at the crosshair's wall intersection
+  //   3. still fires the weapon in Doom
+  // The player types into whichever field is focused (typing keys bypass
+  // the "forward to Doom" path via formHasFocus()), then shoots again to
+  // advance. Hitting submit fires the form's native submit handler, which
+  // flips the terminal into its thanks-view; the next shot resets the
+  // form and goes back to the name field.
+  // Attempt to submit the form. Validates first; on failure, lights up
+  // the .show-errors state, focuses the first empty/invalid field, and
+  // parks formStep one step before the submit slot so the next shot
+  // tries to submit again instead of walking off the cycle.
+  function attemptSubmit() {
+    if (!formEl.checkValidity()) {
+      terminalEl.classList.add('show-errors');
+      const ids = ['f-name', 'f-email', 'f-concern'];
+      for (let i = 0; i < ids.length; i++) {
+        const el = document.getElementById(ids[i]);
+        if (!el.checkValidity()) {
+          el.focus();
+          // advanceFormStep() increments formStep after this runs, so
+          // setting to length-2 means next shot lands back on submit.
+          formStep = formCycle.length - 2;
+          return;
+        }
+      }
+      return;
+    }
+    terminalEl.classList.remove('show-errors');
+    // Fire a real submit event on the form so the existing submit
+    // handler (which flips terminal state to 'thanks') runs.
+    formEl.dispatchEvent(new Event('submit', { cancelable: true }));
+  }
+
+  const formCycle = [
+    () => document.getElementById('f-name'   ).focus(),
+    () => document.getElementById('f-email'  ).focus(),
+    () => document.getElementById('f-concern').focus(),
+    attemptSubmit,
+  ];
+  let formStep = 0;
+  function advanceFormStep() {
+    // If we're already on the thanks screen, the next shot resets the
+    // form and goes back to NAME — so "keep shooting = keep cycling".
+    if (terminalEl.dataset.state === 'thanks') {
+      terminalEl.dataset.state = 'form';
+      document.getElementById('f-name'   ).value = '';
+      document.getElementById('f-email'  ).value = '';
+      document.getElementById('f-concern').value = '';
+      terminalEl.classList.remove('show-errors');
+      formStep = 0;
+    }
+    try { formCycle[formStep](); } catch (e) { console.warn('[doom] cycle', e); }
+    formStep = (formStep + 1) % formCycle.length;
+  }
+
+  // Keys that are always forwarded to Doom regardless of whether a
+  // form input holds focus. Only the arrows — A/D strafe, Shift run,
+  // and the comma/period keys are gated by focus so they type into
+  // inputs normally.  Without this set, holding Up then shooting
+  // (which focuses an input) would leave the ArrowUp keyup unhandled
+  // and the player would keep running forever.  Ctrl (fire) has its
+  // own always-forwarded path further down.
+  const ALWAYS_GAME_KEYS = new Set([
+    'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
+  ]);
+
+  addEventListener('keydown', ev => {
+    // Fire key is global: it always fires the weapon, always records a
+    // bullet hole, and always advances the form cycle — regardless of
+    // whether a form input currently has focus.  Ctrl is a modifier so
+    // on its own it doesn't type anything into inputs, so intercepting
+    // it here is harmless to the typing path.
+    if (ev.key === 'Control') {
+      doomExports.reportKeyDown(doomExports.KEY_FIRE);
+      if (!ev.repeat) {
+        addBulletHole();
+        advanceFormStep();
+      }
+      ev.preventDefault();
+      return;
+    }
+    // Movement keys: always forwarded, regardless of form focus. Means
+    // you can keep running while typing / shooting into the form, and
+    // held-down keys always get their matching keyup.
+    if (ALWAYS_GAME_KEYS.has(ev.key)) {
+      const k = translateKey(ev);
+      if (k !== null && k !== undefined) doomExports.reportKeyDown(k);
+      ev.preventDefault();
+      return;
+    }
+    if (formHasFocus()) return;           // let the form have its keys
+    const k = translateKey(ev);
+    if (k === null || k === undefined) return;
+    doomExports.reportKeyDown(k);
+    // Stop the browser from scrolling on arrows/space when doom has focus.
+    ev.preventDefault();
+  });
+  addEventListener('keyup', ev => {
+    // Matching release for the fire key — goes to Doom regardless of
+    // focus so the weapon state stays consistent.
+    if (ev.key === 'Control') {
+      doomExports.reportKeyUp(doomExports.KEY_FIRE);
+      ev.preventDefault();
+      return;
+    }
+    if (ALWAYS_GAME_KEYS.has(ev.key)) {
+      const k = translateKey(ev);
+      if (k !== null && k !== undefined) doomExports.reportKeyUp(k);
+      ev.preventDefault();
+      return;
+    }
+    if (formHasFocus()) return;
+    const k = translateKey(ev);
+    if (k === null || k === undefined) return;
+    doomExports.reportKeyUp(k);
+    ev.preventDefault();
+  });
+
+  // Focus the canvas so key events have a home target. (Tabindex=0 above.)
+  canvas.focus();
+
+  // ─── Click routing ───
+  // Chromium's current layoutsubtree implementation DOES lay the form
+  // children out with correct bounding rects (elementFromPoint finds
+  // them, DevTools highlights them), but real user pointer events don't
+  // reliably dispatch to them — the canvas swallows the event even when
+  // the click point is directly over an <input>. (Playwright uses CDP
+  // to synthesize events and routes correctly, which hid the bug until
+  // a real user tried it.)
+  //
+  // The fix: listen for pointerdown (and mousedown as a safety net) on
+  // `window` in the CAPTURE phase so we see every click no matter where
+  // Chromium routes it — canvas, document, body, whatever. Then ask the
+  // browser what element is under the cursor via elementFromPoint(). If
+  // it's inside our form, walk up to a focusable control (in case
+  // elementFromPoint lands on a wrapper div) and .focus() it. Buttons
+  // also get .click() so the form submit fires. All events dispatched
+  // are real DOM events; we're just compensating for the gap in native
+  // hit-test routing under layoutsubtree, not faking user interaction.
+  //
+  // The form's submit handler is guarded against double-fire, so if
+  // Chromium's native routing does work and delivers the click normally
+  // too, the second submit is ignored.
+  function routeFormClick(e) {
+    const under = document.elementFromPoint(e.clientX, e.clientY);
+    if (!under || !terminalEl.contains(under)) {
+      // Click outside the form — pull keyboard focus back to the canvas
+      // so Doom gets its keys (unless the click happened somewhere that
+      // naturally owns focus, like the address bar / devtools).
+      if (!formHitTest(e.clientX, e.clientY) && document.activeElement !== canvas) {
+        canvas.focus();
+      }
+      return;
+    }
+    if (under === terminalEl) return; // click on form background, no-op
+
+    // Walk up to a focusable control in case elementFromPoint returned
+    // a wrapping label / div / span.
+    const FOCUSABLE = /^(INPUT|BUTTON|TEXTAREA|SELECT|A)$/;
+    let target = under;
+    while (target && target !== terminalEl && !FOCUSABLE.test(target.tagName)) {
+      target = target.parentElement;
+    }
+    if (!target || target === terminalEl) return;
+
+    if (target.tagName === 'BUTTON') {
+      target.focus();
+      target.click();
+    } else if (typeof target.focus === 'function') {
+      target.focus();
+    }
+    // Don't preventDefault — native routing might still deliver events
+    // and that's fine (double-fire guards are in place).
+  }
+  // Capture phase on window catches the event no matter which DOM node
+  // Chromium picked as the target. Both pointerdown and mousedown are
+  // covered because a handful of input paths (touch emulation, some
+  // extensions) sometimes fire only one of the two.
+  window.addEventListener('pointerdown', routeFormClick, true);
+  window.addEventListener('mousedown',   routeFormClick, true);
+
+  // ─── Terminal placement over the target wall ───
+  // The form is a child of <canvas layoutsubtree>. With layoutsubtree set,
+  // the browser lays it out but never paints it — DOM hit-testing, focus,
+  // text selection, autofill etc. all still work against its layout rect.
+  //
+  // The form's pixels reach the user via overlayForm() below: every tick
+  // we drawElementImage() the form into a scratch region on the main
+  // canvas, read those pixels into a downsample buffer, quantise to the
+  // Doom palette, and write the result directly into W17_1's cached
+  // patch bytes in wasm memory. Doom's own renderer then paints the
+  // PIPE2-textured wall (sidedef 6, rewired via mutateE1M1SidedefsForForm
+  // and backed by W17_1 via mutatePipe2ForForm) using those bytes, so
+  // the form shows as a genuine Doom wall texture on the angled 160-wide
+  // wall just past the spawn room.
+  //
+  // On top of that we ALSO position the element's layout rect exactly
+  // over the wall's on-screen rect, EVERY FRAME, so DOM hit-testing
+  // tracks the player's pose. Why: a real DOM click on the wall has
+  // to hit the real <input> beneath; inspecting the form in DevTools
+  // should highlight exactly where the wall pixels land. This makes
+  // the form legitimately interactive, not just a picture.
+  //
+  // The four wall corners are projected each tick from current player
+  // (x, y, z, angle) — read straight out of the player's mobj_t in
+  // wasm linear memory — into Doom's framebuffer space, then into CSS
+  // px via lastDoomBlit. WALL_FB_QUAD is mutated in place each frame.
+  //
+  // Vanilla Doom projection (320×200 view, 90° hFOV, 32-px status bar):
+  //   centerx = 160                  ← screen mid-x
+  //   centery = 84                   ← (200 - 32)/2 = 84
+  //   projection = 160               ← centerx / tan(45°)
+  //   forward = dx*cos + dy*sin      ← perpendicular distance from player
+  //   lateral = dx*sin - dy*cos      ← right-of-view offset (right is +)
+  //   sx = centerx + lateral * proj / forward
+  //   sy = centery - (vz - viewz) * proj / forward
+  // doom-generic doubles 320×200 → 640×400 in I_FinishUpdate, so we
+  // multiply by 2 to land in framebuffer coords.
+  const WALL_FB_QUAD = {
+    // Hot-mutated each composite() tick by projectWallQuad(). Initial
+    // values are placeholders for the very first frame, before
+    // findPlayerMobj has located the player struct.
+    tl: { x: 374, y:  72 },   // near-top (vertex 5, top)
+    tr: { x: 625, y: 110 },   // far-top  (vertex 7, top)
+    br: { x: 625, y: 247 },   // far-bot  (vertex 7, bot)
+    bl: { x: 374, y: 297 },   // near-bot (vertex 5, bot)
+  };
+
+  // ── Geometry of the form-wall in world space ──
+  // Linedef 6 of E1M1 connects vertex 5 (960,-3648) to vertex 7
+  // (832,-3552) — the angled 160-unit wall just past the spawn room
+  // that we rewired to PIPE2/W17_1. Sector 38: floor 0, ceiling 72.
+  // Vertex 5 sits closer to the spawn point (the NEAR end of the
+  // trapezoid).
+  const WALL_GEOM = {
+    v1: { x: 960, y: -3648 },   // near (linedef start, vertex 5)
+    v2: { x: 832, y: -3552 },   // far  (linedef end,   vertex 7)
+    zTop: 72,                   // sector ceiling
+    zBot: 0,                    // sector floor
+  };
+
+  // Doom view constants. centery accounts for the 32-pixel status bar at
+  // the bottom of the 320×200 viewport: (200-32)/2 = 84.
+  const VIEW_HEIGHT = 41;       // VIEWHEIGHT in P_user.c
+  const VIEW_CENTERX_320 = 160;
+  const VIEW_CENTERY_320 = 84;
+  const VIEW_PROJECTION  = 160; // centerx / tan(FIELDOFVIEW/2)
+  const FB_SCALE         = 2;   // doom-generic upscales 320×200 → 640×400
+
+  // ── Player mobj_t reader ──
+  // doom.wasm has no player-state exports, so we find players[0].mo by
+  // scanning linear memory for the spawn coords as 16.16 fixed-point.
+  // The struct sits in Z_Malloc heap and stays put for the level's
+  // lifetime, so once located the byte offset is stable.
+  //
+  // Field offsets (vanilla mobj_t layout, after the 12-byte thinker_t):
+  //   +0   x       (fixed_t)
+  //   +4   y       (fixed_t)
+  //   +8   z       (fixed_t)
+  //   +20  angle   (angle_t / BAM)
+  //   +52  radius  (fixed_t)   ← used as a sanity-check probe
+  //   +56  height  (fixed_t)   ← used as a sanity-check probe
+  //
+  // Verified empirically against tools/find-player-mobj.mjs: at spawn
+  // x=0x04200000, y=0xF1E00000, angle=0x40000000 (90°), radius=0x100000
+  // (16), height=0x380000 (56).
+  let playerMobjOfs = -1;
+  function findPlayerMobj() {
+    if (iwadMemOfs < 0) return false;
+    const u32 = new Uint32Array(moduleMemory.buffer);
+    const SPAWN_X       = 0x04200000;       //  1056 << 16
+    const SPAWN_Y       = 0xF1E00000;       // -3616 << 16 (uint32)
+    const PLAYER_RADIUS = 0x00100000;       //   16 << 16
+    const PLAYER_HEIGHT = 0x00380000;       //   56 << 16
+    for (let i = 0; i < u32.length - 16; i++) {
+      if (u32[i]   !== SPAWN_X)       continue;
+      if (u32[i+1] !== SPAWN_Y)       continue;
+      if (u32[i+13] !== PLAYER_RADIUS) continue;
+      if (u32[i+14] !== PLAYER_HEIGHT) continue;
+      playerMobjOfs = i * 4;
+      console.log(`[doom] player mobj.x at 0x${playerMobjOfs.toString(16)}`);
+      return true;
+    }
+    return false;
+  }
+
+  // Read the live player pose. Returns {x, y, z, angleRad} in world units.
+  function getPlayerState() {
+    if (playerMobjOfs < 0) return null;
+    // The buffer view must be re-derived each call — wasm memory may grow
+    // and detach the previous view (rare in practice but cheap to guard).
+    const dv = new DataView(moduleMemory.buffer);
+    const x_fp     = dv.getInt32 (playerMobjOfs     , true);
+    const y_fp     = dv.getInt32 (playerMobjOfs +  4, true);
+    const z_fp     = dv.getInt32 (playerMobjOfs +  8, true);
+    const angleBam = dv.getUint32(playerMobjOfs + 20, true);
+    return {
+      x: x_fp / 65536,
+      y: y_fp / 65536,
+      z: z_fp / 65536,
+      // BAM → radians: 0xFFFFFFFF + 1 spans the full circle.
+      angleRad: (angleBam / 0x100000000) * (2 * Math.PI),
+    };
+  }
+
+  // Project the wall vertices through Doom's view pipeline using the
+  // current player state, write the four corners back into WALL_FB_QUAD.
+  // Returns true if the projection succeeded (player state available
+  // AND every wall vertex sits in front of the camera with depth > 1).
+  function projectWallQuad() {
+    const ps = getPlayerState();
+    if (!ps) return false;
+    const cosA  = Math.cos(ps.angleRad);
+    const sinA  = Math.sin(ps.angleRad);
+    const viewz = ps.z + VIEW_HEIGHT;
+
+    function project(vx, vy, vz) {
+      const dx = vx - ps.x;
+      const dy = vy - ps.y;
+      const forward = dx * cosA + dy * sinA;
+      if (forward < 1) return null;            // behind / on top of player
+      const lateral = dx * sinA - dy * cosA;
+      const sx320 = VIEW_CENTERX_320 + lateral * VIEW_PROJECTION / forward;
+      const sy320 = VIEW_CENTERY_320 - (vz - viewz) * VIEW_PROJECTION / forward;
+      return { x: sx320 * FB_SCALE, y: sy320 * FB_SCALE };
+    }
+
+    const tl = project(WALL_GEOM.v1.x, WALL_GEOM.v1.y, WALL_GEOM.zTop);
+    const bl = project(WALL_GEOM.v1.x, WALL_GEOM.v1.y, WALL_GEOM.zBot);
+    const tr = project(WALL_GEOM.v2.x, WALL_GEOM.v2.y, WALL_GEOM.zTop);
+    const br = project(WALL_GEOM.v2.x, WALL_GEOM.v2.y, WALL_GEOM.zBot);
+    if (!tl || !tr || !br || !bl) return false;
+    WALL_FB_QUAD.tl = tl;
+    WALL_FB_QUAD.tr = tr;
+    WALL_FB_QUAD.br = br;
+    WALL_FB_QUAD.bl = bl;
+    return true;
+  }
+  const lastDoomBlit = { x: 0, y: 0, w: 0, h: 0 };
+
+  // Project a point from Doom framebuffer space (640×400) into the
+  // main canvas's CSS-pixel space, using the latest Doom blit rect.
+  function fbToCss(p) {
+    if (lastDoomBlit.w <= 0 || lastDoomBlit.h <= 0) return null;
+    const sx = lastDoomBlit.w / doomW;
+    const sy = lastDoomBlit.h / doomH;
+    return {
+      x: lastDoomBlit.x + p.x * sx,
+      y: lastDoomBlit.y + p.y * sy,
+    };
+  }
+
+  // Axis-aligned bounding box of the projected wall quad in CSS px.
+  // Useful for debug readouts and for the resize-loop fallback.
+  function computeWallCssRect() {
+    const pts = ['tl', 'tr', 'br', 'bl']
+      .map(k => fbToCss(WALL_FB_QUAD[k]));
+    if (pts.some(p => !p)) return null;
+    const xs = pts.map(p => p.x);
+    const ys = pts.map(p => p.y);
+    const left = Math.min(...xs);
+    const top = Math.min(...ys);
+    const right = Math.max(...xs);
+    const bottom = Math.max(...ys);
+    return { left, top, width: right - left, height: bottom - top, pts };
+  }
+
+  // Legacy alias — still referenced by the __doom debug API below.
+  const computeDoorCssRect = computeWallCssRect;
+
+  // Native size of the form element in CSS pixels — matches the WALL
+  // WORLD-SPACE dimensions of the target wall in E1M1 (160×72 units).
+  // Doom samples walls per world unit, so 1 CSS px = 1 Doom texel.
+  const FORM_NATIVE_W = 160;
+  const FORM_NATIVE_H = 72;
+
+  // ── Projective (homography) fit: map the 64×72 form onto the wall quad ──
+  // The wall is a trapezoid in screen space (NEAR edge vertical at
+  // x≈222, FAR edge vertical at x≈373) so a translate+scale transform
+  // only covers the AABB, not the trapezoid.  With matrix3d we can
+  // express a full 2D projective transform, letting the form's bounding
+  // rect follow the actual on-screen quad — inputs, focus rings, and
+  // DevTools inspector highlights all land on the right pixels.
+  //
+  // Standard construction: compute the 3×3 homography H that maps the
+  // unit square to the destination quad, then embed the 8 non-trivial
+  // entries into a CSS matrix3d (row/col layout documented below).
+  // Finally prepend a scale(1/64, 1/72) so the element's 64×72 box is
+  // first normalised to a unit square before H is applied.
+  //
+  // Formula from Heckbert's 1989 master's thesis, "Fundamentals of
+  // Texture Mapping and Image Warping", Appendix A.
+  function unitSquareToQuadHomography(p0, p1, p2, p3) {
+    // Maps (0,0)→p0, (1,0)→p1, (1,1)→p2, (0,1)→p3
+    const dx1 = p1.x - p2.x;
+    const dy1 = p1.y - p2.y;
+    const dx2 = p3.x - p2.x;
+    const dy2 = p3.y - p2.y;
+    const sx  = p0.x - p1.x + p2.x - p3.x;
+    const sy  = p0.y - p1.y + p2.y - p3.y;
+    const det = dx1 * dy2 - dx2 * dy1;
+    if (Math.abs(det) < 1e-9) return null;  // degenerate quad
+    const g = (sx * dy2 - dx2 * sy) / det;
+    const h = (dx1 * sy - sx * dy1) / det;
+    return {
+      a: p1.x - p0.x + g * p1.x,
+      b: p3.x - p0.x + h * p3.x,
+      c: p0.x,
+      d: p1.y - p0.y + g * p1.y,
+      e: p3.y - p0.y + h * p3.y,
+      f: p0.y,
+      g, h,
+    };
+  }
+
+  function positionFormOverDoor() {
+    const tl = fbToCss(WALL_FB_QUAD.tl);
+    const tr = fbToCss(WALL_FB_QUAD.tr);
+    const br = fbToCss(WALL_FB_QUAD.br);
+    const bl = fbToCss(WALL_FB_QUAD.bl);
+    if (!tl || !tr || !br || !bl) return false;
+
+    // Map unit square corners → wall corners in CSS px.
+    //   (0,0)→tl, (1,0)→tr, (1,1)→br, (0,1)→bl
+    const H = unitSquareToQuadHomography(tl, tr, br, bl);
+    if (!H) return false;
+
+    // CSS matrix3d is column-major:
+    //   m11 m12 m13 m14  m21 m22 m23 m24  m31 m32 m33 m34  m41 m42 m43 m44
+    // For a 2D projective transform embedded in a 4×4 we use:
+    //   [ a  b  0  c ]
+    //   [ d  e  0  f ]
+    //   [ 0  0  1  0 ]
+    //   [ g  h  0  1 ]
+    // which in column-major listing becomes:
+    //   m11=a  m12=d  m13=0  m14=g
+    //   m21=b  m22=e  m23=0  m24=h
+    //   m31=0  m32=0  m33=1  m34=0
+    //   m41=c  m42=f  m43=0  m44=1
+    const m3d = [
+      H.a, H.d, 0, H.g,
+      H.b, H.e, 0, H.h,
+      0,   0,   1, 0,
+      H.c, H.f, 0, 1,
+    ].join(',');
+
+    // Layoutsubtree forces children to `position: static`, so the
+    // ONLY CSS primitive that reliably moves the bounding rect is
+    // `transform`.  We feed matrix3d (unit-square → wall quad) and
+    // prepend scale(1/FORM_NATIVE) so the 64×72 element box is first
+    // normalised to a unit square.
+    //
+    // drawElementImage honours CSS transforms, so overlayForm()
+    // temporarily zeroes the transform for the duration of the draw.
+    // offsetWidth / offsetHeight stay at 64/72 regardless of the
+    // transform, so capture always happens at native resolution.
+    terminalEl.style.transformOrigin = '0 0';
+    terminalEl.style.transform =
+      `matrix3d(${m3d}) scale(${1 / FORM_NATIVE_W}, ${1 / FORM_NATIVE_H})`;
+    return true;
+  }
+
+  // Wait a frame for fonts + initial layout so the form has a real size
+  // before we start capturing it.
+  await document.fonts.ready.catch(() => {});
+  await new Promise(r => requestAnimationFrame(r));
+
+  function formHitTest(clientX, clientY) {
+    const r = terminalEl.getBoundingClientRect();
+    return clientX >= r.left && clientX <= r.right
+        && clientY >= r.top  && clientY <= r.bottom;
+  }
+
+  // ─── Compositor ───
+  // Called every Doom tick (~35Hz). First calls overlayForm() which
+  // drawElementImage()s the live form into a scratch region at the top
+  // left of this canvas and reads those pixels back into an offscreen
+  // buffer for palette quantisation. Then we blackfill the whole canvas
+  // (wiping the scratch area) and blit the Doom framebuffer over the
+  // top. The form is never visible as a canvas overlay — its only path
+  // to the screen is through the patch-cache injection that overlayForm
+  // performed, which Doom's own renderer then picks up when it next
+  // draws the DOOR3 wall.
+  function composite() {
+    const cw = canvas.width, ch = canvas.height;
+
+    // Capture the form into the top-left scratch region. This paints
+    // pixels into the canvas backing store, but the fillRect below (and
+    // the Doom blit) will fully overwrite those pixels within the same
+    // synchronous call, so nothing reaches the display.
+    overlayForm();
+
+    // Scale Doom's 4:3 framebuffer to fit while keeping aspect.
+    const aspect = doomW / doomH;
+    const screenAspect = cw / ch;
+    let dw, dh;
+    if (screenAspect > aspect) {
+      dh = ch;
+      dw = Math.floor(dh * aspect);
+    } else {
+      dw = cw;
+      dh = Math.floor(dw / aspect);
+    }
+    const dx = Math.floor((cw - dw) / 2);
+    const dy = Math.floor((ch - dh) / 2);
+
+    ctx.fillStyle = '#000';
+    ctx.fillRect(0, 0, cw, ch);
+
+    if (doomReady) {
+      // Doom framebuffer → main canvas, scaled, pixelated.
+      ctx.imageSmoothingEnabled = false;
+      ctx.drawImage(doomCanvas, 0, 0, doomW, doomH, dx, dy, dw, dh);
+    }
+
+    // Remember where Doom's framebuffer landed on the main canvas, in CSS
+    // pixels. Used by positionFormOverDoor() to put #uac-terminal's layout
+    // rect exactly over the form-wall's visible screen rect.
+    lastDoomBlit.x = dx / dpr;
+    lastDoomBlit.y = dy / dpr;
+    lastDoomBlit.w = dw / dpr;
+    lastDoomBlit.h = dh / dpr;
+
+    // ── Live wall projection ──
+    // Locate the player mobj_t in linear memory once (cheap memory scan
+    // looking for the spawn coords + radius/height sentinel). Once
+    // located, project the wall's four world-space corners into the
+    // current Doom framebuffer every frame, write them into
+    // WALL_FB_QUAD, and re-run positionFormOverDoor() so the form's
+    // CSS bounding rect (and therefore DOM hit-testing) tracks the
+    // player as they move and turn.
+    if (playerMobjOfs < 0) {
+      if (findPlayerMobj()) {
+        // One-shot: rotate the player 90° left on first lock-on so the
+        // form wall (which sits to the west of spawn, behind an angled
+        // linedef) is already in view and the "shoot to focus" prompt
+        // is reachable without any turning. Spawn angle is ANG90
+        // (north, 0x40000000); +90° counterclockwise → ANG180 (west,
+        // 0x80000000). We write mo->angle directly — P_PlayerThink
+        // reads from there each tick, and the view angle syncs for
+        // free since there's no pending turn momentum on frame 1.
+        new DataView(moduleMemory.buffer)
+          .setUint32(playerMobjOfs + 20, 0x80000000, true);
+      }
+    }
+    if (projectWallQuad()) positionFormOverDoor();
+  }
+
+  // Keep the form aligned with the door when the window resizes.
+  addEventListener('resize', () => {
+    // Let composite() refresh lastDoomBlit first, then reposition.
+    requestAnimationFrame(() => positionFormOverDoor());
+  });
+
+  // ─── Live HH:MM:SS clock in the terminal footer.
+  //     Reads system time so the wall texture functions as an actual
+  //     wall clock — and doubles as a free live-repaint canary: every
+  //     second the form DOM mutates, overlayForm() re-captures, the
+  //     W17_1 cache rewrites, and Doom's next frame shows the new
+  //     time on the wall.
+  function updateClock() {
+    if (terminalEl.dataset.state === 'thanks') return;
+    const d = new Date();
+    const hh = String(d.getHours()  ).padStart(2, '0');
+    const mm = String(d.getMinutes()).padStart(2, '0');
+    const ss = String(d.getSeconds()).padStart(2, '0');
+    timerEl.textContent = `${hh}:${mm}:${ss}`;
+  }
+  updateClock();
+  setInterval(updateClock, 1000);
+
+  // ─── Submit → thanks screen ───
+  // Native form submit handler: intercept, flip the terminal into its
+  // thanks-view via data-state, then reset back after a beat. Works for
+  // both mouse clicks on the SEND button and pressing Enter while any
+  // form input has focus (native HTML default).
+  formEl.addEventListener('submit', ev => {
+    ev.preventDefault();
+    // Guard against double-fire: if Chromium's native click routing and
+    // our pointerdown fallback both deliver the button click, submit
+    // fires twice. The second one is a no-op.
+    if (terminalEl.dataset.state === 'thanks') return;
+    // Final safety net — if something slipped through with invalid
+    // fields (e.g. a click path that skipped attemptSubmit), bail
+    // cleanly and surface the errors.
+    if (!formEl.checkValidity()) {
+      terminalEl.classList.add('show-errors');
+      const firstInvalid = formEl.querySelector('input:invalid');
+      if (firstInvalid) firstInvalid.focus();
+      return;
+    }
+    terminalEl.classList.remove('show-errors');
+    terminalEl.dataset.state = 'thanks';
+    // Pull focus back onto the canvas so Enter/Space don't re-trigger
+    // anything in the now-hidden form.
+    canvas.focus();
+    setTimeout(() => {
+      terminalEl.dataset.state = 'form';
+      // Clear the form so a second demo run starts clean.
+      document.getElementById('f-name').value    = '';
+      document.getElementById('f-email').value   = '';
+      document.getElementById('f-concern').value = '';
+      terminalEl.classList.remove('show-errors');
+    }, 3500);
+  });
+
+  // ─── P-key demo: auto-fill the form and submit ───
+  // When the user presses P (outside the form) we type "Doomguy" into
+  // name, "d.guy@gmail.com" into email, "demonic invasion" into complaint,
+  // pausing 240ms between fields and 800ms before submit. Random 40–140ms
+  // per keystroke to feel human. Not synthetic events pretending to be
+  // input — we set .value and dispatch real 'input' events so any
+  // listeners (and the capture pipeline) see it exactly like real typing.
+  const demoInputs = [
+    { id: 'f-name',    text: 'Doomguy'          },
+    { id: 'f-email',   text: 'd.guy@gmail.com'  },
+    { id: 'f-concern', text: 'demonic invasion' },
+  ];
+  const sleep = ms => new Promise(r => setTimeout(r, ms));
+  let demoRunning = false;
+  async function runDemo() {
+    if (demoRunning) return;
+    demoRunning = true;
+    // Reset state in case a previous thanks is still showing.
+    terminalEl.dataset.state = 'form';
+    for (let i = 0; i < demoInputs.length; i++) {
+      const { id, text } = demoInputs[i];
+      const el = document.getElementById(id);
+      // 240ms pause between focus events — but not before the first
+      // field, we want the demo to kick off immediately on keypress.
+      if (i > 0) await sleep(240);
+      el.focus();
+      el.value = '';
+      el.dispatchEvent(new Event('input', { bubbles: true }));
+      for (const ch of text) {
+        el.value += ch;
+        el.dispatchEvent(new Event('input', { bubbles: true }));
+        await sleep(40 + Math.random() * 100);
+      }
+    }
+    await sleep(800);
+    formEl.requestSubmit();
+    demoRunning = false;
+  }
+
+  addEventListener('keydown', ev => {
+    if ((ev.key === 'p' || ev.key === 'P') && !formHasFocus()) {
+      ev.preventDefault();
+      runDemo();
+    }
+  }, true);   // capture phase so Doom's key forwarder can't eat it first
+
+  // ─── Boot Doom ───
+  doomExports.initGame();
+
+  // Doom's own 35Hz tick. After each tick the game's drawFrame callback
+  // has just written the latest frame to doomCanvas. composite() handles
+  // everything: it calls overlayForm() at the start (which captures the
+  // live form into the patch cache in wasm memory), then blackfills and
+  // blits the Doom framebuffer over the scratch area.
+  //
+  // findPatchCaches() is a memory scan — throttled to once every 10
+  // ticks. Each pass picks up any patches that have been cached since
+  // the last pass. overlayForm no-ops cleanly until its target is ready.
+  let tickCount = 0;
+  setInterval(() => {
+    try { doomExports.tickGame(); } catch (e) { console.error(e); }
+    composite();
+    tickCount++;
+    if ((tickCount % 10) === 0) findPatchCaches();
+    framesSinceSetup++;
+  }, 1000 / 35);
+
+  // Expose debug handles for the world-model pattern.
+  window.__doom = {
+    exports: doomExports,
+    memory:  moduleMemory,
+    canvas:  doomCanvas,
+    terminal: terminalEl,
+    composite,
+
+    // Phase 2 — wall-texture overlay controls.
+    formTarget,
+    patchState,
+    compositeTextures: COMPOSITE_TEXTURES,
+    overlay: {
+      get enabled() { return overlayEnabled; },
+      set enabled(v) { overlayEnabled = !!v; },
+      get shrink() { return formShrink; },
+      set shrink(v) {
+        const f = Number(v);
+        if (!Number.isFinite(f) || f <= 0) return;
+        formShrink = f;
+        console.log('[doom] overlay.shrink =', formShrink);
+      },
+    },
+
+    // Diagnostic dump for Playwright / external test code. Everything
+    // needed to answer "is the form actually getting into the wall?".
+    diag() {
+      const patches = {};
+      for (const [name, st] of patchState) {
+        patches[name] = {
+          srcMemOfs:    st.srcMemOfs,
+          cacheMemOfs:  st.cacheMemOfs,
+          cached:       st.cacheMemOfs >= 0,
+          width:        st.meta.width,
+          height:       st.meta.height,
+        };
+      }
+      const tex = currentTexture();
+      return {
+        iwadMemOfs,
+        overlayEnabled,
+        formTarget: { ...formTarget },
+        currentTexture: tex && {
+          width: tex.width, height: tex.height,
+          patches: tex.patches.map(p => ({ ...p })),
+        },
+        patches,
+        allTargetCached: tex
+          ? tex.patches.every(p => {
+              const st = patchState.get(p.patchName);
+              return st && st.cacheMemOfs >= 0;
+            })
+          : false,
+        tickCount,
+        framesSinceSetup,
+        terminalRect: terminalEl.getBoundingClientRect().toJSON(),
+      };
+    },
+
+    // Read one column of raw bytes straight out of the cached patch, so
+    // we can verify overlayForm() actually wrote form-shaped data.
+    dumpPatchColumn(patchName, col = 0, rows = 16) {
+      const st = patchState.get(patchName);
+      if (!st || st.cacheMemOfs < 0) return null;
+      const u8 = memU8();
+      const base = st.cacheMemOfs + st.meta.columnOfs[col] + 3;
+      return Array.from(u8.subarray(base, base + rows));
+    },
+
+    // Force one overlay pass for manual testing.
+    paintNow() { overlayForm(); },
+
+    // Bullet-hole state — expose for Playwright testing and for the
+    // debug console.  Clearing the array wipes the holes on the next
+    // overlayForm() tick.
+    bulletHoles,
+    addBulletHole,
+    clearBulletHoles() { bulletHoles.length = 0; },
+
+    // Door rect helpers — returns the current on-screen CSS rect of DOOR3
+    // and repositions the form element over it. Useful for verifying that
+    // DevTools inspector highlights align with the on-door pixels.
+    doorRect() { return computeDoorCssRect(); },
+    repositionForm() { return positionFormOverDoor(); },
+
+    // Live handles to the form + first input so Playwright / DevTools can
+    // drive them directly without querySelector roundtrips.
+    form: formEl,
+    firstInput: document.getElementById('f-name'),
+
+    // Swap which wall texture the form is drawn on, or nudge the offset.
+    // Example: __doom.setTarget({ texture: 'DOOR2_5', x: 0, y: 4, w: 64, h: 64 })
+    setTarget({ texture, x, y, w, h }) {
+      if (texture !== undefined) {
+        const ok = COMPOSITE_TEXTURES[texture]
+          || DOOM_PATCHES.find(p => p.name === texture);
+        if (!ok) {
+          const known = [
+            ...Object.keys(COMPOSITE_TEXTURES),
+            ...DOOM_PATCHES.map(p => p.name),
+          ].join(', ');
+          console.warn(`unknown texture ${texture}. known: ${known}`);
+          return;
+        }
+        formTarget.textureName = texture;
+      }
+      if (typeof x === 'number') formTarget.x = x | 0;
+      if (typeof y === 'number') formTarget.y = y | 0;
+      if (typeof w === 'number') formTarget.w = w | 0;
+      if (typeof h === 'number') formTarget.h = h | 0;
+      // Resize the scratch canvases for the new target size.
+      resizeScratch(formTarget.w, formTarget.h);
+      console.log('[doom] formTarget =', { ...formTarget });
+    },
+
+    // Nudge where the form sits on the page (CSS pixels). Hit-test region
+    // and visible drawElementImage rect move together since they're the
+    // same element at the same layout position.
+    placeForm({ left, top, width }) {
+      if (typeof left   === 'number') terminalEl.style.left  = `${left}px`;
+      if (typeof top    === 'number') terminalEl.style.top   = `${top}px`;
+      if (typeof width  === 'number') terminalEl.style.width = `${width}px`;
+      console.log('[doom] form at',
+        terminalEl.style.left, terminalEl.style.top, terminalEl.style.width);
+    },
+
+    // Wipe our overlay on every backing patch and restore Doom's original
+    // pixels to their cached copies. Useful when iterating on placement.
+    restoreCurrent() {
+      const tex = currentTexture();
+      if (!tex) return;
+      const u8 = memU8();
+      for (const p of tex.patches) {
+        const st = patchState.get(p.patchName);
+        if (!st || st.cacheMemOfs < 0) continue;
+        const orig = st.meta.originalBytes;
+        for (let i = 0; i < st.meta.size; i++) {
+          u8[st.cacheMemOfs + i] = orig[i];
+        }
+      }
+      console.log(`[doom] restored ${formTarget.textureName} backing patches to original bytes`);
+    },
+  };
+
+  console.log('[doom] ready. arrows/ctrl/space to play, tab to focus form.');
+})();
+</script>
+</body>
+</html>
