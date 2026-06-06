@@ -92,163 +92,137 @@ html, body {
   text-rendering: optimizeSpeed;
 }
 
-/* Two views that swap based on data-state. Only one is visible at a
-   time — capture path reads whichever is currently rendered.
+/* ── c15t consent banner ──
+   Three views swap on data-state: "banner" (default), "customize", "saved".
+   Only one is rendered at a time; overlayForm() captures whichever is shown
+   and writes it into the wall texture. Everything is sized to land cleanly on
+   the 160×72 texel grid so the palette-quantise step stays crisp. */
+#uac-terminal .banner-view,
+#uac-terminal .customize-view,
+#uac-terminal .saved-view { display: none; }
+#uac-terminal[data-state="banner"]    .banner-view    { display: flex; }
+#uac-terminal[data-state="customize"] .customize-view { display: flex; }
+#uac-terminal[data-state="saved"]     .saved-view     { display: flex; }
 
-   The form-view is a flex column that fills the inner content box of
-   #uac-terminal so the footer (timer + SEND button) can be `margin-top:
-   auto` and stick to the bottom regardless of how many fields sit
-   above it. Everything is sized to land on integer 8-pixel rows. */
-#uac-terminal .form-view {
-  display: flex;
+#uac-terminal .banner-view,
+#uac-terminal .customize-view {
   flex-direction: column;
   width: 100%;
   height: 100%;
 }
-#uac-terminal .thanks-view { display: none; }
-#uac-terminal[data-state="thanks"] .form-view { display: none; }
-#uac-terminal[data-state="thanks"] .thanks-view { display: flex; }
 
-#uac-terminal .hdr {
+/* Title — c15t's "We value your privacy". */
+#uac-terminal .c15-title {
   font-size: 8px;
+  line-height: 8px;
   color: #ffcc66;
   text-align: center;
   letter-spacing: 0;
-  line-height: 8px;
-  height: 8px;
 }
-
-#uac-terminal form {
-  display: flex;
-  flex-direction: column;
-  flex: 1 1 auto;
-  margin-top: 2px;
-  min-height: 0;
-}
-
-#uac-terminal .field {
-  display: block;
-  margin-top: 1px;
-}
-#uac-terminal .field:first-child { margin-top: 0; }
-
-#uac-terminal input {
-  display: block;
-  width: 100%;
-  height: 10px;
-  background: #000;
-  color: #ffcc66;
-  font-family: 'Silkscreen', monospace;
-  font-size: 8px;
-  line-height: 1;
-  border: 1px solid #6a0f00;
-  padding: 0 1px;
-  margin: 0;
-  outline: none;
-  /* Bright red blinking caret so you can see it against the dark bg. */
-  caret-color: #ff3b1f;
-  pointer-events: auto;
-  box-sizing: border-box;
-  -webkit-text-fill-color: #ffcc66;
-}
-#uac-terminal input:focus {
-  /* Brighter border and text when the field holds keyboard focus — also
-     swaps the placeholder colour so the focus is unmistakable even when
-     the input is empty. */
-  border-color: #ffcc66;
-  background: #2a1308;
-  color: #fff;
-  -webkit-text-fill-color: #fff;
-}
-/* Mid-grey placeholders so they read as "empty / hint" rather than as
-   real text. Clears the visual once the field has a value. */
-#uac-terminal input::placeholder { color: #777; }
-#uac-terminal input:focus::placeholder { color: #999; }
-
-/* Validation state — two paths light this up:
-   1. `:user-invalid`: user typed something invalid (e.g. bad email
-      format). Fires as soon as they interact.
-   2. `.show-errors input:invalid`: form was submitted with empty
-      required fields. Added programmatically on submit attempt.
-   Bright red border + tinted background is the only way the error
-   reads through the palette quantise step at 160×72. */
-#uac-terminal input:user-invalid,
-#uac-terminal.show-errors input:invalid {
-  border-color: #ff3b1f;
-  background: #3a0a04;
-  color: #ff7050;
-  -webkit-text-fill-color: #ff7050;
-}
-#uac-terminal.show-errors input:invalid::placeholder {
-  color: #ff7050;
-}
-/* Error line in the footer — replaces the timer when validation fails. */
-#uac-terminal .footer .err {
-  display: none;
-  color: #ff3b1f;
-  text-shadow: 0 0 2px #ff3b1f;
-  letter-spacing: 0.04em;
-}
-#uac-terminal.show-errors .footer .timer { display: none; }
-#uac-terminal.show-errors .footer .err   { display: inline; }
-
-/* Quiet hint that sits between the last input and the footer. Lives in
-   the blank space that the footer's margin-top:auto would otherwise
-   leave empty. Intentionally dimmer than placeholder grey so it reads
-   as metadata, not form content. */
-#uac-terminal .hint {
+/* Description — c15t's default cookie copy, dimmer than the title. 7px keeps
+   the three wrapped lines inside the 156px content width. */
+#uac-terminal .c15-desc {
   font-size: 7px;
-  line-height: 7px;
-  letter-spacing: 0.05em;
-  color: #555;
+  line-height: 8px;
+  color: #b89070;
   text-align: center;
-  margin-top: 4px;
+  margin-top: 2px;
 }
-#uac-terminal.show-errors .hint { display: none; }
 
-#uac-terminal .footer {
+/* Action buttons. Anchored to the bottom of the column via margin-top:auto
+   so they sit on the wall's lower edge regardless of description length. */
+#uac-terminal .c15-actions {
   display: flex;
-  align-items: center;
-  justify-content: space-between;
-  height: 10px;
-  /* Push to the bottom of the flex column so the SEND button always
-     anchors to the bottom edge of the wall regardless of field count. */
+  flex-wrap: wrap;
+  gap: 2px;
   margin-top: auto;
-  font-size: 8px;
-  line-height: 10px;
-  letter-spacing: 0;
 }
-#uac-terminal .footer .timer {
-  color: #aa2200;
-  flex: 0 0 auto;
-}
-#uac-terminal .footer button {
-  flex: 0 0 auto;
-  display: inline-block;
-  height: 10px;
-  padding: 0 2px;
-  margin: 0;
-  background: #6a0f00;
-  color: #ffe0a0;
-  border: 1px solid #ff3b1f;
+#uac-terminal .c15-btn {
+  flex: 1 1 0;
+  height: 11px;
+  padding: 0 1px;
+  background: #1a0b08;
+  color: #ffcc66;
+  border: 1px solid #6a0f00;
   font-family: 'Silkscreen', monospace;
   font-size: 8px;
   line-height: 8px;
   letter-spacing: 0;
+  white-space: nowrap;
   cursor: pointer;
   pointer-events: auto;
   box-sizing: border-box;
 }
-#uac-terminal .footer button:hover,
-#uac-terminal .footer button:focus {
-  background: #ff3b1f;
-  color: #1a0b08;
-  outline: none;
+/* c15t button hierarchy: accept = primary (filled green), reject = stroke,
+   customize = ghost link. Colours chosen to land on distinct Doom palette
+   entries after quantise. */
+#uac-terminal .c15-btn.accept {
+  background: #2f7d3a; border-color: #46d35a; color: #d9ffd9;
 }
+#uac-terminal .c15-btn.customize {
+  flex-basis: 100%;
+  height: 9px;
+  background: transparent;
+  border-color: transparent;
+  color: #c89a6a;
+  text-decoration: underline;
+}
+/* Focus = the control the next shot / SPACE will activate. Bright ring so the
+   highlight is unmistakable through the quantise. */
+#uac-terminal .c15-btn:focus {
+  outline: none;
+  border-color: #ffcc66;
+  background: #5a2a10;
+  color: #ffffff;
+}
+#uac-terminal .c15-btn.accept:focus   { background: #46d35a; color: #06200a; }
+#uac-terminal .c15-btn.customize:focus { background: #3a1c0a; color: #ffffff; }
 
-/* Thanks screen — centred both axes, 6 short lines to keep every line
-   inside the 62-pixel content width at Silkscreen 8px. */
-#uac-terminal .thanks-view {
+/* "Secured by c15t" — c15t's footer attribution. */
+#uac-terminal .c15-secured {
+  font-size: 6px;
+  line-height: 7px;
+  color: #6a5038;
+  text-align: center;
+  margin-top: 2px;
+}
+#uac-terminal .c15-secured b { color: #c89a6a; font-weight: 700; }
+
+/* Customize view — c15t's five consent categories (we surface four; the
+   necessary one is locked on). */
+#uac-terminal .c15-cats {
+  display: flex;
+  flex-direction: column;
+  gap: 1px;
+  margin-top: 2px;
+  flex: 1 1 auto;
+}
+#uac-terminal .cat {
+  display: flex;
+  align-items: center;
+  gap: 3px;
+  font-size: 7px;
+  line-height: 8px;
+  color: #d0a878;
+  pointer-events: auto;
+}
+#uac-terminal .cat input {
+  appearance: none;
+  -webkit-appearance: none;
+  width: 7px;
+  height: 7px;
+  margin: 0;
+  flex: 0 0 auto;
+  background: #000;
+  border: 1px solid #6a0f00;
+  pointer-events: auto;
+}
+#uac-terminal .cat input:checked  { background: #46d35a; border-color: #46d35a; }
+#uac-terminal .cat input:disabled { background: #3a2a18; border-color: #6a5038; }
+#uac-terminal .cat input:focus    { outline: none; border-color: #ffcc66; box-shadow: 0 0 0 1px #ffcc66; }
+
+/* Saved confirmation — centred both axes. */
+#uac-terminal .saved-view {
   width: 100%;
   height: 100%;
   flex-direction: column;
@@ -257,17 +231,11 @@ html, body {
   text-align: center;
   color: #ffcc66;
   font-size: 8px;
-  line-height: 8px;
+  line-height: 9px;
 }
-#uac-terminal .thanks-view .line { display: block; }
-#uac-terminal .thanks-view .title {
-  color: #ffcc66;
-  margin-bottom: 3px;
-}
-#uac-terminal .thanks-view .sig {
-  color: #aa2200;
-  margin-top: 3px;
-}
+#uac-terminal .saved-view .line { display: block; }
+#uac-terminal .saved-view .title { color: #46d35a; margin-bottom: 2px; }
+#uac-terminal .saved-view .sig { color: #6a5038; font-size: 6px; margin-top: 3px; }
 
 /* Attribution bar — fixed to the bottom so a fullscreen canvas can't
    push it off.  Stays unobtrusive: small, dim grey, minimal background
@@ -345,7 +313,7 @@ html, body {
 <!-- Gameplay hint. Sits just above the attribution bar so it's visible
      without crowding the game. Tells the player where the html-in-canvas
      form is and how to interact with it. -->
-<div id="tip">Form is straight ahead, between the pillars. Shoot it to focus.</div>
+<div id="tip">Consent banner ahead, between the pillars. Shoot to highlight, SPACE to choose.</div>
 
 <!--
   One canvas. Real Doom renders into it. A real HTML form is a direct child
@@ -359,43 +327,42 @@ html, body {
 -->
 <canvas id="game" layoutsubtree tabindex="0">
 
-  <div id="uac-terminal" data-state="form">
+  <div id="uac-terminal" data-state="banner">
 
-    <div class="form-view">
-      <div class="hdr">UAC COMPLAINTS</div>
-
-      <form id="enquiry" novalidate>
-        <div class="field">
-          <input type="text" id="f-name" name="name"
-                 autocomplete="off" spellcheck="false"
-                 placeholder="NAME" maxlength="32" required>
-        </div>
-        <div class="field">
-          <input type="email" id="f-email" name="email"
-                 autocomplete="off" spellcheck="false"
-                 placeholder="EMAIL" maxlength="32" required>
-        </div>
-        <div class="field">
-          <input type="text" id="f-concern" name="concern"
-                 autocomplete="off" spellcheck="false"
-                 placeholder="COMPLAINT" maxlength="32" required>
-        </div>
-        <div class="hint">SHOOT TO FOCUS</div>
-        <div class="footer">
-          <span class="timer" id="timer">00:00:00</span>
-          <span class="err">FILL ALL FIELDS</span>
-          <button type="submit" id="submit-btn">SEND</button>
-        </div>
-      </form>
+    <!-- c15t consent banner: title + description + Reject/Accept/Customize.
+         Real <button> elements, so keyboard focus (shoot to highlight) and
+         native Space/Enter activation work through the layoutsubtree. -->
+    <div class="banner-view">
+      <div class="c15-title">WE VALUE YOUR PRIVACY</div>
+      <div class="c15-desc">This site uses cookies to improve your experience, analyze traffic &amp; show personalized content.</div>
+      <div class="c15-actions">
+        <button type="button" class="c15-btn reject"    id="c15-reject">Reject All</button>
+        <button type="button" class="c15-btn accept"    id="c15-accept">Accept All</button>
+        <button type="button" class="c15-btn customize" id="c15-customize">Customize</button>
+      </div>
+      <div class="c15-secured">Secured by <b>c15t</b></div>
     </div>
 
-    <div class="thanks-view">
-      <span class="line title">THANKS!</span>
-      <span class="line">YOUR</span>
-      <span class="line">CONCERNS</span>
-      <span class="line">HAVE BEEN</span>
-      <span class="line">NOTED</span>
-      <span class="line sig">UAC</span>
+    <!-- Customize: c15t's per-category toggles. Necessary is locked on. -->
+    <div class="customize-view">
+      <div class="c15-title">PRIVACY SETTINGS</div>
+      <div class="c15-cats">
+        <label class="cat"><input type="checkbox" id="cat-necessary" checked disabled><span>Strictly Necessary</span></label>
+        <label class="cat"><input type="checkbox" id="cat-measurement"><span>Analytics</span></label>
+        <label class="cat"><input type="checkbox" id="cat-marketing"><span>Marketing</span></label>
+        <label class="cat"><input type="checkbox" id="cat-experience"><span>Experience</span></label>
+      </div>
+      <div class="c15-actions">
+        <button type="button" class="c15-btn reject" id="c15-back">Back</button>
+        <button type="button" class="c15-btn accept" id="c15-save">Save Settings</button>
+      </div>
+    </div>
+
+    <!-- Saved confirmation. -->
+    <div class="saved-view">
+      <span class="line title">CONSENT SAVED</span>
+      <span class="line" id="saved-detail">PREFERENCES STORED</span>
+      <span class="line sig">Secured by c15t</span>
     </div>
 
   </div>
@@ -423,8 +390,6 @@ import {
   // ─── DOM refs ───
   const canvas      = document.getElementById('game');
   const terminalEl  = document.getElementById('uac-terminal');
-  const formEl      = document.getElementById('enquiry');
-  const timerEl     = document.getElementById('timer');
   const missing     = document.getElementById('missing-api');
 
   const ctx = canvas.getContext('2d', { alpha: false });
@@ -1214,9 +1179,14 @@ import {
     // the same Silkscreen 8 px font the wall texture actually renders in,
     // then scaled by formShrink since the form is drawn into the down
     // canvas at that same scale.
+    // Only text-entry fields get a synthetic caret — reading selectionEnd on
+    // a checkbox/radio throws, and the consent banner has no text inputs, so
+    // this guard keeps the caret off the category toggles.
     const act = document.activeElement;
-    if (act && terminalEl.contains(act) &&
-        (act.tagName === 'INPUT' || act.tagName === 'TEXTAREA') &&
+    const isTextField =
+      (act && act.tagName === 'INPUT' && /^(text|email|search|tel|url|password)$/.test(act.type)) ||
+      (act && act.tagName === 'TEXTAREA');
+    if (act && terminalEl.contains(act) && isTextField &&
         (Math.floor(performance.now() / 500) & 1) === 0) {
       let ox = 0, oy = 0, n = act;
       while (n && n !== terminalEl) {
@@ -1415,64 +1385,75 @@ import {
     return a && terminalEl.contains(a);
   }
 
-  // ─── Shoot-to-cycle form focus ───
-  // Because real-user pointer events don't reliably route to the form's
+  // ─── Shoot-to-cycle banner focus ───
+  // Because real-user pointer events don't reliably route to the banner's
   // layoutsubtree children in current Chromium (see Click routing block
   // below), we bind focus advancement to the FIRE key instead. Each shot:
-  //   1. advances the cycle  (name → email → concern → submit → name …)
+  //   1. moves the highlight to the next control in the current view
   //   2. records a bullet hole at the crosshair's wall intersection
   //   3. still fires the weapon in Doom
-  // The player types into whichever field is focused (typing keys bypass
-  // the "forward to Doom" path via formHasFocus()), then shoots again to
-  // advance. Hitting submit fires the form's native submit handler, which
-  // flips the terminal into its thanks-view; the next shot resets the
-  // form and goes back to the name field.
-  // Attempt to submit the form. Validates first; on failure, lights up
-  // the .show-errors state, focuses the first empty/invalid field, and
-  // parks formStep one step before the submit slot so the next shot
-  // tries to submit again instead of walking off the cycle.
-  function attemptSubmit() {
-    if (!formEl.checkValidity()) {
-      terminalEl.classList.add('show-errors');
-      const ids = ['f-name', 'f-email', 'f-concern'];
-      for (let i = 0; i < ids.length; i++) {
-        const el = document.getElementById(ids[i]);
-        if (!el.checkValidity()) {
-          el.focus();
-          // advanceFormStep() increments formStep after this runs, so
-          // setting to length-2 means next shot lands back on submit.
-          formStep = formCycle.length - 2;
-          return;
-        }
-      }
-      return;
-    }
-    terminalEl.classList.remove('show-errors');
-    // Fire a real submit event on the form so the existing submit
-    // handler (which flips terminal state to 'thanks') runs.
-    formEl.dispatchEvent(new Event('submit', { cancelable: true }));
+  // The player highlights a control by shooting, then presses SPACE / ENTER
+  // to activate it. Those keys bypass the "forward to Doom" path (see
+  // formHasFocus()) and are delivered natively to the focused <button> /
+  // checkbox, so activation is real DOM behaviour, not a synthesised event.
+
+  // The focusable controls in the current view, in highlight order. In the
+  // customize view the locked "necessary" checkbox is skipped.
+  function bannerControls() {
+    const ids = terminalEl.dataset.state === 'customize'
+      ? ['cat-measurement', 'cat-marketing', 'cat-experience', 'c15-back', 'c15-save']
+      : ['c15-reject', 'c15-accept', 'c15-customize'];
+    return ids.map(id => document.getElementById(id)).filter(Boolean);
   }
 
-  const formCycle = [
-    () => document.getElementById('f-name'   ).focus(),
-    () => document.getElementById('f-email'  ).focus(),
-    () => document.getElementById('f-concern').focus(),
-    attemptSubmit,
-  ];
+  // Switch view and reset the highlight cursor. Optionally focus a control.
+  function setBannerState(state, focusId, stepAfter = 0) {
+    terminalEl.dataset.state = state;
+    formStep = stepAfter;
+    if (focusId) {
+      const el = document.getElementById(focusId);
+      if (el) el.focus();
+    }
+  }
+
+  // Record the player's choice and flash the saved confirmation, then drop
+  // back to the banner after a beat (so "keep shooting = keep cycling").
+  function saveConsent(detail) {
+    document.getElementById('saved-detail').textContent = detail;
+    terminalEl.dataset.state = 'saved';
+    formStep = 0;
+    canvas.focus();
+    clearTimeout(saveConsent._t);
+    saveConsent._t = setTimeout(() => setBannerState('banner'), 3500);
+  }
+
+  document.getElementById('c15-reject').addEventListener('click', () => saveConsent('ALL REJECTED'));
+  document.getElementById('c15-accept').addEventListener('click', () => saveConsent('ALL ACCEPTED'));
+  document.getElementById('c15-customize').addEventListener('click', () => {
+    // Open the category toggles; highlight the first one (next shot → marketing).
+    setBannerState('customize', 'cat-measurement', 1);
+  });
+  document.getElementById('c15-back').addEventListener('click', () => {
+    setBannerState('banner', 'c15-reject', 1);
+  });
+  document.getElementById('c15-save').addEventListener('click', () => {
+    const on = ['measurement', 'marketing', 'experience']
+      .filter(c => document.getElementById('cat-' + c).checked);
+    saveConsent(on.length ? on.map(c => c.toUpperCase()).join(' ') + ' ON' : 'ONLY NECESSARY');
+  });
+
   let formStep = 0;
   function advanceFormStep() {
-    // If we're already on the thanks screen, the next shot resets the
-    // form and goes back to NAME — so "keep shooting = keep cycling".
-    if (terminalEl.dataset.state === 'thanks') {
-      terminalEl.dataset.state = 'form';
-      document.getElementById('f-name'   ).value = '';
-      document.getElementById('f-email'  ).value = '';
-      document.getElementById('f-concern').value = '';
-      terminalEl.classList.remove('show-errors');
-      formStep = 0;
+    // From the saved screen, the next shot drops straight back to the banner.
+    if (terminalEl.dataset.state === 'saved') {
+      clearTimeout(saveConsent._t);
+      setBannerState('banner');
     }
-    try { formCycle[formStep](); } catch (e) { console.warn('[doom] cycle', e); }
-    formStep = (formStep + 1) % formCycle.length;
+    const controls = bannerControls();
+    if (controls.length === 0) return;
+    if (formStep >= controls.length) formStep = 0;
+    controls[formStep].focus();
+    formStep = (formStep + 1) % controls.length;
   }
 
   // Keys that are always forwarded to Doom regardless of whether a
@@ -1586,6 +1567,11 @@ import {
     if (!target || target === terminalEl) return;
 
     if (target.tagName === 'BUTTON') {
+      target.focus();
+      target.click();
+    } else if (target.tagName === 'INPUT' && target.type === 'checkbox' && !target.disabled) {
+      // Category toggle: focus AND flip it, since native click routing into
+      // the layoutsubtree is unreliable (same reason buttons are clicked here).
       target.focus();
       target.click();
     } else if (typeof target.focus === 'function') {
@@ -1970,94 +1956,22 @@ import {
     requestAnimationFrame(() => positionFormOverDoor());
   });
 
-  // ─── Live HH:MM:SS clock in the terminal footer.
-  //     Reads system time so the wall texture functions as an actual
-  //     wall clock — and doubles as a free live-repaint canary: every
-  //     second the form DOM mutates, overlayForm() re-captures, the
-  //     W17_1 cache rewrites, and Doom's next frame shows the new
-  //     time on the wall.
-  function updateClock() {
-    if (terminalEl.dataset.state === 'thanks') return;
-    const d = new Date();
-    const hh = String(d.getHours()  ).padStart(2, '0');
-    const mm = String(d.getMinutes()).padStart(2, '0');
-    const ss = String(d.getSeconds()).padStart(2, '0');
-    timerEl.textContent = `${hh}:${mm}:${ss}`;
-  }
-  updateClock();
-  setInterval(updateClock, 1000);
-
-  // ─── Submit → thanks screen ───
-  // Native form submit handler: intercept, flip the terminal into its
-  // thanks-view via data-state, then reset back after a beat. Works for
-  // both mouse clicks on the SEND button and pressing Enter while any
-  // form input has focus (native HTML default).
-  formEl.addEventListener('submit', ev => {
-    ev.preventDefault();
-    // Guard against double-fire: if Chromium's native click routing and
-    // our pointerdown fallback both deliver the button click, submit
-    // fires twice. The second one is a no-op.
-    if (terminalEl.dataset.state === 'thanks') return;
-    // Final safety net — if something slipped through with invalid
-    // fields (e.g. a click path that skipped attemptSubmit), bail
-    // cleanly and surface the errors.
-    if (!formEl.checkValidity()) {
-      terminalEl.classList.add('show-errors');
-      const firstInvalid = formEl.querySelector('input:invalid');
-      if (firstInvalid) firstInvalid.focus();
-      return;
-    }
-    terminalEl.classList.remove('show-errors');
-    terminalEl.dataset.state = 'thanks';
-    // Pull focus back onto the canvas so Enter/Space don't re-trigger
-    // anything in the now-hidden form.
-    canvas.focus();
-    setTimeout(() => {
-      terminalEl.dataset.state = 'form';
-      // Clear the form so a second demo run starts clean.
-      document.getElementById('f-name').value    = '';
-      document.getElementById('f-email').value   = '';
-      document.getElementById('f-concern').value = '';
-      terminalEl.classList.remove('show-errors');
-    }, 3500);
-  });
-
-  // ─── P-key demo: auto-fill the form and submit ───
-  // When the user presses P (outside the form) we type "Doomguy" into
-  // name, "d.guy@gmail.com" into email, "demonic invasion" into complaint,
-  // pausing 240ms between fields and 800ms before submit. Random 40–140ms
-  // per keystroke to feel human. Not synthetic events pretending to be
-  // input — we set .value and dispatch real 'input' events so any
-  // listeners (and the capture pipeline) see it exactly like real typing.
-  const demoInputs = [
-    { id: 'f-name',    text: 'Doomguy'          },
-    { id: 'f-email',   text: 'd.guy@gmail.com'  },
-    { id: 'f-concern', text: 'demonic invasion' },
-  ];
+  // ─── P-key demo: walk the banner and accept ───
+  // When the user presses P (outside the banner) we highlight each button in
+  // turn — reject, accept — then activate accept with a real .click(), so the
+  // whole capture→quantise→wall pipeline shows the highlight moving and the
+  // saved confirmation, exactly as if a player had shot through the controls.
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   let demoRunning = false;
   async function runDemo() {
     if (demoRunning) return;
     demoRunning = true;
-    // Reset state in case a previous thanks is still showing.
-    terminalEl.dataset.state = 'form';
-    for (let i = 0; i < demoInputs.length; i++) {
-      const { id, text } = demoInputs[i];
-      const el = document.getElementById(id);
-      // 240ms pause between focus events — but not before the first
-      // field, we want the demo to kick off immediately on keypress.
-      if (i > 0) await sleep(240);
-      el.focus();
-      el.value = '';
-      el.dispatchEvent(new Event('input', { bubbles: true }));
-      for (const ch of text) {
-        el.value += ch;
-        el.dispatchEvent(new Event('input', { bubbles: true }));
-        await sleep(40 + Math.random() * 100);
-      }
+    setBannerState('banner');
+    for (const id of ['c15-reject', 'c15-accept']) {
+      document.getElementById(id).focus();
+      await sleep(550);
     }
-    await sleep(800);
-    formEl.requestSubmit();
+    document.getElementById('c15-accept').click();
     demoRunning = false;
   }
 
@@ -2174,10 +2088,11 @@ import {
     doorRect() { return computeDoorCssRect(); },
     repositionForm() { return positionFormOverDoor(); },
 
-    // Live handles to the form + first input so Playwright / DevTools can
-    // drive them directly without querySelector roundtrips.
-    form: formEl,
-    firstInput: document.getElementById('f-name'),
+    // Live handles to the banner so Playwright / DevTools can drive it
+    // directly without querySelector roundtrips.
+    banner: terminalEl,
+    bannerControls,
+    setBannerState,
 
     // Swap which wall texture the form is drawn on, or nudge the offset.
     // Example: __doom.setTarget({ texture: 'DOOR2_5', x: 0, y: 4, w: 64, h: 64 })
@@ -2233,7 +2148,7 @@ import {
     },
   };
 
-  console.log('[doom] ready. arrows/ctrl/space to play, tab to focus form.');
+  console.log('[doom] ready. arrows/ctrl/space to play, shoot to highlight the consent banner, space to choose.');
 })();
 </script>
 </body>
