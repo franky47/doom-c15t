@@ -111,19 +111,21 @@ html, body {
   height: 100%;
 }
 
-/* Title — c15t's "We value your privacy". */
+/* Title — c15t's "We value your privacy". 7px so all 21 chars fit on one line
+   inside the 156px content box (8px overflowed and got clipped). */
 #uac-terminal .c15-title {
-  font-size: 8px;
+  font-size: 7px;
   line-height: 8px;
   color: #ffcc66;
   text-align: center;
   letter-spacing: 0;
 }
-/* Description — c15t's default cookie copy, dimmer than the title. 7px keeps
-   the three wrapped lines inside the 156px content width. */
+/* Description — c15t's default cookie copy, dimmer than the title. 6px keeps
+   the wrapped copy to ~3 lines inside the 156px content width and leaves room
+   for the action buttons below within the 72px-tall texture. */
 #uac-terminal .c15-desc {
-  font-size: 7px;
-  line-height: 8px;
+  font-size: 6px;
+  line-height: 7px;
   color: #b89070;
   text-align: center;
   margin-top: 2px;
@@ -139,14 +141,14 @@ html, body {
 }
 #uac-terminal .c15-btn {
   flex: 1 1 0;
-  height: 11px;
+  height: 10px;
   padding: 0 1px;
   background: #1a0b08;
   color: #ffcc66;
   border: 1px solid #6a0f00;
   font-family: 'Silkscreen', monospace;
-  font-size: 8px;
-  line-height: 8px;
+  font-size: 7px;
+  line-height: 7px;
   letter-spacing: 0;
   white-space: nowrap;
   cursor: pointer;
@@ -161,7 +163,7 @@ html, body {
 }
 #uac-terminal .c15-btn.customize {
   flex-basis: 100%;
-  height: 9px;
+  height: 8px;
   background: transparent;
   border-color: transparent;
   color: #c89a6a;
@@ -334,7 +336,7 @@ html, body {
          native Space/Enter activation work through the layoutsubtree. -->
     <div class="banner-view">
       <div class="c15-title">WE VALUE YOUR PRIVACY</div>
-      <div class="c15-desc">This site uses cookies to improve your experience, analyze traffic &amp; show personalized content.</div>
+      <div class="c15-desc">This site uses cookies to improve your experience and analyze traffic.</div>
       <div class="c15-actions">
         <button type="button" class="c15-btn reject"    id="c15-reject">Reject All</button>
         <button type="button" class="c15-btn accept"    id="c15-accept">Accept All</button>
@@ -1087,15 +1089,12 @@ import {
   // column is dispatched to whichever backing patch owns that column.
   let overlayEnabled = true;
   let framesSinceSetup = 0;
-  // Eyeball fudge: the DOM element sits on the wall trapezoid at the
-  // right size (matrix3d derived from the wall corners), but the
-  // drawElementImage capture comes out looking visually a bit bigger
-  // than the DOM element on the wall — the fields in the texture don't
-  // line up with the hit-test boxes. Scaling the captured element down
-  // inside its 160×72 texture region before it's written into the
-  // W17_1 patch cache pulls the two back into alignment. Tweak live
-  // via window.__doom.overlay.shrink (0..1).
-  let formShrink = 0.8;
+  // Fraction of the texel region the captured form fills (1.0 = edge to
+  // edge). With the ÷dpr capture fix below the element maps 1:1 onto its
+  // 160×72 texture region, so the banner fills the whole wall panel and its
+  // hit-test boxes line up with what the player sees. Tweak live via
+  // window.__doom.overlay.shrink (0..1) to inset it.
+  let formShrink = 1.0;
   const formDraw = ctx.drawElementImage
     ? ctx.drawElementImage.bind(ctx)
     : ctx.drawElement.bind(ctx);
@@ -1141,7 +1140,12 @@ import {
     // element at <100% of that region, leaving a black frame around
     // it — which carries through the downsample straight into the
     // texture and shrinks what the player sees on the wall.
-    ctx.scale((capW / elW) * formShrink, (capH / elH) * formShrink);
+    // ÷dpr: drawElementImage rasterises the element at CSS×devicePixelRatio
+    // device pixels, but the scratch readback below reads only capW×capH
+    // DEVICE px. On a 2× display that captured just ~60% of the element and
+    // clipped the rest. Dividing the capture scale by dpr maps the element's
+    // full CSS box into the capW×capH scratch region regardless of dpr.
+    ctx.scale((capW / elW) * formShrink / dpr, (capH / elH) * formShrink / dpr);
     // The element is normally `transform: translate(X, Y)` so its DOM
     // bounding rect sits over the door. drawElementImage() honours the
     // element's CSS transform when rasterising — if we leave the translate
