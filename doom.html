@@ -93,7 +93,8 @@ html, body {
 }
 
 /* ── c15t consent banner ──
-   Three views swap on data-state: "banner" (default), "customize", "saved".
+   Four views swap on data-state: "banner" (default), "customize", "saved",
+   and "dismissed" (none shown — the panel has lifted into the ceiling).
    Only one is rendered at a time; overlayForm() captures whichever is shown
    and writes it into the wall texture. Everything is sized to land cleanly on
    the 160×72 texel grid so the palette-quantise step stays crisp. */
@@ -1289,15 +1290,38 @@ import {
 
       const { st, localCol } = chosen;
       const { meta } = st;
-      const colBase = st.cacheMemOfs + meta.columnOfs[localCol] + 3 + formTarget.y;
+      const colOfs = meta.columnOfs[localCol];
+      const colBase = st.cacheMemOfs + colOfs + 3 + formTarget.y;
       const maxRows = Math.min(rectH, meta.height - formTarget.y);
+
+      // ── Door rise ──
+      // `panelRise` (texels) scrolls the panel up toward the ceiling and opens
+      // a transparent gap of the same height at the bottom of the opening.
+      // `visRows` is what remains on the wall, top-anchored; rows below it are
+      // cut from the column's Doom post so the masked-midtexture renderer shows
+      // the sector behind the 2-sided line through the gap. The post's original
+      // length is stashed lazily (always captured on a closed first frame) so
+      // we can restore an exact full-height opaque post when the door re-closes.
+      const rise = Math.max(0, Math.min(maxRows, Math.round(panelRise)));
+      const visRows = maxRows - rise;
+      const lengthOfs = st.cacheMemOfs + colOfs + 1;
+      if (st.origLen === undefined) st.origLen = new Map();
+      if (!st.origLen.has(localCol)) st.origLen.set(localCol, u8[lengthOfs]);
 
       // Flip the source column horizontally when FORM_FLIP_X is set, so the
       // east→west texture U of LD39 doesn't mirror the form for the player.
       const srcDx = FORM_FLIP_X ? (rectW - 1 - dx) : dx;
-      for (let dy = 0; dy < maxRows; dy++) {
-        const i = (dy * rectW + srcDx) * 4;
+      for (let dy = 0; dy < visRows; dy++) {
+        const i = ((dy + rise) * rectW + srcDx) * 4;
         u8[colBase + dy] = quantise(img[i], img[i+1], img[i+2]);
+      }
+      if (rise <= 0) {
+        u8[lengthOfs] = st.origLen.get(localCol);   // closed: full opaque post
+      } else {
+        // Open: truncate the post after `visRows` form rows and terminate it,
+        // leaving the rest of the opening transparent.
+        u8[lengthOfs] = formTarget.y + visRows;
+        u8[colBase + visRows + 1] = 0xff;           // next-post topdelta = end
       }
     }
   }
@@ -1437,15 +1461,48 @@ import {
     }
   }
 
-  // Record the player's choice and flash the saved confirmation, then drop
-  // back to the banner after a beat (so "keep shooting = keep cycling").
+  // ─── Panel rise (door open) tween ───
+  // How far the panel has lifted, in texels (0 = fully closed, covering the
+  // opening; formTarget.h = fully open, gone). overlayForm() reads this when it
+  // writes the wall: it scrolls the captured panel up by `panelRise` rows AND
+  // shortens each column's Doom post so the vacated rows at the bottom become
+  // transparent — Doom's masked-midtexture renderer then shows the sector
+  // behind the 2-sided line through the gap, so the whole framed panel reads
+  // as a door sliding up into the ceiling and revealing the level beyond.
+  // Driven per-frame by requestAnimationFrame (not a CSS transition) so every
+  // drawElementImage capture samples the live position deterministically.
+  let panelRise = 0;
+  let riseRAF = 0;
+  const easeIn  = t => t * t;          // accelerate upward — "sucked" into ceiling
+  const easeOut = t => 1 - (1 - t) * (1 - t);
+  function tweenRise(to, dur, ease, onDone) {
+    cancelAnimationFrame(riseRAF);
+    const from = panelRise, t0 = performance.now();
+    function step(now) {
+      const t = dur <= 0 ? 1 : Math.min(1, (now - t0) / dur);
+      panelRise = from + (to - from) * ease(t);
+      if (t < 1) riseRAF = requestAnimationFrame(step);
+      else if (onDone) onDone();
+    }
+    riseRAF = requestAnimationFrame(step);
+  }
+
+  // Record the player's choice and flash the saved confirmation, then raise the
+  // whole panel like a door — revealing the level behind — and park it in the
+  // "dismissed" state. The next shot (advanceFormStep) lowers the banner back
+  // down, so the demo stays replayable without it reappearing on its own.
   function saveConsent(detail) {
     document.getElementById('saved-detail').textContent = detail;
+    cancelAnimationFrame(riseRAF);
+    panelRise = 0;                      // confirmation fully covers the opening
     terminalEl.dataset.state = 'saved';
     formStep = 0;
     canvas.focus();
     clearTimeout(saveConsent._t);
-    saveConsent._t = setTimeout(() => setBannerState('banner'), 3500);
+    // Hold the confirmation briefly, then open the door up into the ceiling.
+    saveConsent._t = setTimeout(() => {
+      tweenRise(formTarget.h, 650, easeIn, () => { terminalEl.dataset.state = 'dismissed'; });
+    }, 1500);
   }
 
   document.getElementById('c15-reject').addEventListener('click', () => saveConsent('ALL REJECTED'));
@@ -1465,10 +1522,14 @@ import {
 
   let formStep = 0;
   function advanceFormStep() {
-    // From the saved screen, the next shot drops straight back to the banner.
-    if (terminalEl.dataset.state === 'saved') {
+    // From the saved/dismissed screen, the next shot brings the banner back —
+    // lowering the door back down from the ceiling if it had already lifted.
+    const st = terminalEl.dataset.state;
+    if (st === 'saved' || st === 'dismissed') {
       clearTimeout(saveConsent._t);
+      cancelAnimationFrame(riseRAF);
       setBannerState('banner');
+      tweenRise(0, 420, easeOut);
     }
     const controls = bannerControls();
     if (controls.length === 0) return;
