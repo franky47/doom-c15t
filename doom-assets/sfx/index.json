@@ -1,0 +1,387 @@
+[
+  {
+    "name": "barexp",
+    "lump": "DSBAREXP",
+    "rate": 11025,
+    "samples": 18560,
+    "seconds": 1.683
+  },
+  {
+    "name": "bdcls",
+    "lump": "DSBDCLS",
+    "rate": 11025,
+    "samples": 4163,
+    "seconds": 0.378
+  },
+  {
+    "name": "bdopn",
+    "lump": "DSBDOPN",
+    "rate": 11025,
+    "samples": 4149,
+    "seconds": 0.376
+  },
+  {
+    "name": "bgact",
+    "lump": "DSBGACT",
+    "rate": 11025,
+    "samples": 9992,
+    "seconds": 0.906
+  },
+  {
+    "name": "bgdth1",
+    "lump": "DSBGDTH1",
+    "rate": 11025,
+    "samples": 7089,
+    "seconds": 0.643
+  },
+  {
+    "name": "bgdth2",
+    "lump": "DSBGDTH2",
+    "rate": 11025,
+    "samples": 9279,
+    "seconds": 0.842
+  },
+  {
+    "name": "bgsit1",
+    "lump": "DSBGSIT1",
+    "rate": 11025,
+    "samples": 13594,
+    "seconds": 1.233
+  },
+  {
+    "name": "bgsit2",
+    "lump": "DSBGSIT2",
+    "rate": 11025,
+    "samples": 16043,
+    "seconds": 1.455
+  },
+  {
+    "name": "brsdth",
+    "lump": "DSBRSDTH",
+    "rate": 11025,
+    "samples": 11003,
+    "seconds": 0.998
+  },
+  {
+    "name": "brssit",
+    "lump": "DSBRSSIT",
+    "rate": 11025,
+    "samples": 13730,
+    "seconds": 1.245
+  },
+  {
+    "name": "claw",
+    "lump": "DSCLAW",
+    "rate": 11025,
+    "samples": 6372,
+    "seconds": 0.578
+  },
+  {
+    "name": "dmact",
+    "lump": "DSDMACT",
+    "rate": 11025,
+    "samples": 11817,
+    "seconds": 1.072
+  },
+  {
+    "name": "dmpain",
+    "lump": "DSDMPAIN",
+    "rate": 11025,
+    "samples": 9479,
+    "seconds": 0.86
+  },
+  {
+    "name": "dorcls",
+    "lump": "DSDORCLS",
+    "rate": 11025,
+    "samples": 13850,
+    "seconds": 1.256
+  },
+  {
+    "name": "doropn",
+    "lump": "DSDOROPN",
+    "rate": 11025,
+    "samples": 13784,
+    "seconds": 1.25
+  },
+  {
+    "name": "firsht",
+    "lump": "DSFIRSHT",
+    "rate": 11025,
+    "samples": 14708,
+    "seconds": 1.334
+  },
+  {
+    "name": "firxpl",
+    "lump": "DSFIRXPL",
+    "rate": 11025,
+    "samples": 11661,
+    "seconds": 1.058
+  },
+  {
+    "name": "getpow",
+    "lump": "DSGETPOW",
+    "rate": 11025,
+    "samples": 7896,
+    "seconds": 0.716
+  },
+  {
+    "name": "itemup",
+    "lump": "DSITEMUP",
+    "rate": 11025,
+    "samples": 2231,
+    "seconds": 0.202
+  },
+  {
+    "name": "itmbk",
+    "lump": "DSITMBK",
+    "rate": 22050,
+    "samples": 11143,
+    "seconds": 0.505
+  },
+  {
+    "name": "noway",
+    "lump": "DSNOWAY",
+    "rate": 11025,
+    "samples": 3878,
+    "seconds": 0.352
+  },
+  {
+    "name": "oof",
+    "lump": "DSOOF",
+    "rate": 11025,
+    "samples": 3878,
+    "seconds": 0.352
+  },
+  {
+    "name": "pdiehi",
+    "lump": "DSPDIEHI",
+    "rate": 11025,
+    "samples": 10803,
+    "seconds": 0.98
+  },
+  {
+    "name": "pistol",
+    "lump": "DSPISTOL",
+    "rate": 11025,
+    "samples": 5629,
+    "seconds": 0.511
+  },
+  {
+    "name": "pldeth",
+    "lump": "DSPLDETH",
+    "rate": 11025,
+    "samples": 10980,
+    "seconds": 0.996
+  },
+  {
+    "name": "plpain",
+    "lump": "DSPLPAIN",
+    "rate": 11025,
+    "samples": 15120,
+    "seconds": 1.371
+  },
+  {
+    "name": "podth1",
+    "lump": "DSPODTH1",
+    "rate": 11025,
+    "samples": 12931,
+    "seconds": 1.173
+  },
+  {
+    "name": "podth2",
+    "lump": "DSPODTH2",
+    "rate": 11025,
+    "samples": 9302,
+    "seconds": 0.844
+  },
+  {
+    "name": "podth3",
+    "lump": "DSPODTH3",
+    "rate": 11025,
+    "samples": 10914,
+    "seconds": 0.99
+  },
+  {
+    "name": "popain",
+    "lump": "DSPOPAIN",
+    "rate": 11025,
+    "samples": 8603,
+    "seconds": 0.78
+  },
+  {
+    "name": "posact",
+    "lump": "DSPOSACT",
+    "rate": 11025,
+    "samples": 10742,
+    "seconds": 0.974
+  },
+  {
+    "name": "posit1",
+    "lump": "DSPOSIT1",
+    "rate": 11025,
+    "samples": 5302,
+    "seconds": 0.481
+  },
+  {
+    "name": "posit2",
+    "lump": "DSPOSIT2",
+    "rate": 11025,
+    "samples": 11246,
+    "seconds": 1.02
+  },
+  {
+    "name": "posit3",
+    "lump": "DSPOSIT3",
+    "rate": 11025,
+    "samples": 11063,
+    "seconds": 1.003
+  },
+  {
+    "name": "pstart",
+    "lump": "DSPSTART",
+    "rate": 11025,
+    "samples": 8196,
+    "seconds": 0.743
+  },
+  {
+    "name": "pstop",
+    "lump": "DSPSTOP",
+    "rate": 11025,
+    "samples": 6626,
+    "seconds": 0.601
+  },
+  {
+    "name": "punch",
+    "lump": "DSPUNCH",
+    "rate": 11025,
+    "samples": 2464,
+    "seconds": 0.223
+  },
+  {
+    "name": "rlaunc",
+    "lump": "DSRLAUNC",
+    "rate": 11025,
+    "samples": 15451,
+    "seconds": 1.401
+  },
+  {
+    "name": "rxplod",
+    "lump": "DSRXPLOD",
+    "rate": 11025,
+    "samples": 14443,
+    "seconds": 1.31
+  },
+  {
+    "name": "sawful",
+    "lump": "DSSAWFUL",
+    "rate": 11025,
+    "samples": 18064,
+    "seconds": 1.638
+  },
+  {
+    "name": "sawhit",
+    "lump": "DSSAWHIT",
+    "rate": 11025,
+    "samples": 7978,
+    "seconds": 0.724
+  },
+  {
+    "name": "sawidl",
+    "lump": "DSSAWIDL",
+    "rate": 11025,
+    "samples": 7499,
+    "seconds": 0.68
+  },
+  {
+    "name": "sawup",
+    "lump": "DSSAWUP",
+    "rate": 11025,
+    "samples": 16257,
+    "seconds": 1.475
+  },
+  {
+    "name": "sgcock",
+    "lump": "DSSGCOCK",
+    "rate": 11025,
+    "samples": 5866,
+    "seconds": 0.532
+  },
+  {
+    "name": "sgtatk",
+    "lump": "DSSGTATK",
+    "rate": 11025,
+    "samples": 9318,
+    "seconds": 0.845
+  },
+  {
+    "name": "sgtdth",
+    "lump": "DSSGTDTH",
+    "rate": 11025,
+    "samples": 12219,
+    "seconds": 1.108
+  },
+  {
+    "name": "sgtsit",
+    "lump": "DSSGTSIT",
+    "rate": 11025,
+    "samples": 11132,
+    "seconds": 1.01
+  },
+  {
+    "name": "shotgn",
+    "lump": "DSSHOTGN",
+    "rate": 11025,
+    "samples": 9413,
+    "seconds": 0.854
+  },
+  {
+    "name": "slop",
+    "lump": "DSSLOP",
+    "rate": 11025,
+    "samples": 11086,
+    "seconds": 1.006
+  },
+  {
+    "name": "stnmov",
+    "lump": "DSSTNMOV",
+    "rate": 11025,
+    "samples": 2927,
+    "seconds": 0.265
+  },
+  {
+    "name": "swtchn",
+    "lump": "DSSWTCHN",
+    "rate": 11025,
+    "samples": 6223,
+    "seconds": 0.564
+  },
+  {
+    "name": "swtchx",
+    "lump": "DSSWTCHX",
+    "rate": 11025,
+    "samples": 5371,
+    "seconds": 0.487
+  },
+  {
+    "name": "telept",
+    "lump": "DSTELEPT",
+    "rate": 11025,
+    "samples": 15452,
+    "seconds": 1.402
+  },
+  {
+    "name": "tink",
+    "lump": "DSTINK",
+    "rate": 11025,
+    "samples": 165,
+    "seconds": 0.015
+  },
+  {
+    "name": "wpnup",
+    "lump": "DSWPNUP",
+    "rate": 11025,
+    "samples": 5843,
+    "seconds": 0.53
+  }
+]
