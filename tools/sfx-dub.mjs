@@ -19,8 +19,14 @@ const TARGET = '/tmp/sfxmix.wav';
 
 // time(s), sound name (lump minus DS, see doom-assets/sfx/), gain, label
 const CUES = [
-  [6.15, 'swtchn', 1.0, 'consent "Accept All" click'],
-  [8.55, 'doropn', 0.7, 'banner slides up'],
+  // ── new-game menu (authentic: open menu = swtchn, Enter-confirm = pistol;
+  //    verified against id Software m_menu.c). Frame numbers from the capture. ──
+  [15 / 60, 'swtchn', 1.0, 'main menu opens (frame 15)'],
+  [45 / 60, 'pistol', 1.0, 'New Game -> episode (frame 45)'],
+  [73 / 60, 'pistol', 1.0, 'episode -> skill (frame 73)'],
+  [173 / 60, 'pistol', 1.0, 'skill -> level start (frame 173)'],
+  [6.55, 'swtchn', 1.0, 'consent "Accept All" click (frame 393)'],
+  [8.167, 'doropn', 0.7, 'banner slides up (frame 490)'],
   [14.85, 'itemup', 1.0, 'INTH armor pickup'],
   // ── firefight 1 ──
   [26.4, 'posact', 0.6, 'cookie stirs (flavor)'],
