@@ -389,11 +389,11 @@ html, body {
 
 </canvas>
 
-<div id="missing-api">
+<div id="missing-api" role="alert" aria-live="assertive">
   <div class="box">
     <h2>HTML-IN-CANVAS REQUIRED</h2>
     <p>This demo uses <code>drawElementImage()</code>, part of the WICG html-in-canvas proposal.</p>
-    <p style="margin-top:10px">Open in Chrome with <code>chrome://flags/#canvas-draw-element</code> enabled.</p>
+    <p style="margin-top:10px">Open in desktop Chrome with <code>chrome://flags/#canvas-draw-element</code> enabled.</p>
   </div>
 </div>
 
@@ -411,6 +411,36 @@ import {
   const canvas      = document.getElementById('game');
   const terminalEl  = document.getElementById('uac-terminal');
   const missing     = document.getElementById('missing-api');
+  const ctx         = canvas.getContext('2d', { alpha: false });
+
+  // Feature detection is authoritative: if another browser implements the API,
+  // let it run. Browser detection is used only to tailor the recovery message.
+  // There is no separate web-visible switch for the flag; a missing method is
+  // the signal for both "flag disabled" and "browser does not support it".
+  const hasDrawElement =
+    typeof ctx.drawElementImage === 'function' ||
+    typeof ctx.drawElement === 'function';
+
+  if (!hasDrawElement) {
+    const brands = navigator.userAgentData?.brands || [];
+    const hasChromeBrand = brands.some(({ brand }) => brand === 'Google Chrome');
+    const uaLooksLikeChrome = /\bChrome\/\d+/.test(navigator.userAgent)
+      && !/\b(?:Edg|OPR)\//.test(navigator.userAgent);
+    const isMobile = navigator.userAgentData?.mobile
+      || /\b(?:Android|Mobile|CriOS)\b/.test(navigator.userAgent);
+    const isDesktopChrome = (hasChromeBrand || uaLooksLikeChrome) && !isMobile;
+
+    missing.querySelector('.box').innerHTML = isDesktopChrome
+      ? `<h2>CHROME FLAG REQUIRED</h2>
+         <p>Chrome is supported, but <code>drawElementImage()</code> is unavailable.</p>
+         <p style="margin-top:10px">Open <code>chrome://flags/#canvas-draw-element</code>, set it to <strong>Enabled</strong>, then relaunch Chrome and reload this page.</p>
+         <p style="margin-top:10px">If the flag is not listed, update Chrome first.</p>`
+      : `<h2>DESKTOP CHROME REQUIRED</h2>
+         <p>This demo depends on the experimental <code>drawElementImage()</code> canvas API, which is not available in this browser.</p>
+         <p style="margin-top:10px">Open this page in desktop Google Chrome, then enable <code>chrome://flags/#canvas-draw-element</code> and relaunch Chrome.</p>`;
+    missing.classList.add('visible');
+    return;
+  }
 
   // Preload E1M1 while Doom's menu is open, but do not start it until the
   // player object appears in the level. If autoplay policy rejects that
@@ -568,20 +598,8 @@ import {
   addEventListener('keydown', unlockSoundEffects, true);
   addEventListener('pointerdown', unlockSoundEffects, true);
 
-  const ctx = canvas.getContext('2d', { alpha: false });
-
-  // Feature detect. Chrome 138+ with canvas-draw-element flag exposes
-  // ctx.drawElementImage. Older builds had ctx.drawElement (pre-rename).
-  const hasDrawElement =
-    typeof ctx.drawElementImage === 'function' ||
-    typeof ctx.drawElement === 'function';
-
-  if (!hasDrawElement) {
-    missing.classList.add('visible');
-    return;
-  }
-
-  // Alias so code is stable across rename.
+  // Alias so code is stable across the drawElement → drawElementImage rename.
+  // Unsupported browsers returned above before fetching audio or wasm assets.
   const drawElementImage = ctx.drawElementImage
     ? ctx.drawElementImage.bind(ctx)
     : ctx.drawElement.bind(ctx);
