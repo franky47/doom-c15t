@@ -1669,8 +1669,7 @@ import {
   // drawElementImage capture samples the live position deterministically.
   let panelRise = 0;
   let riseRAF = 0;
-  const easeIn  = t => t * t;          // accelerate upward — "sucked" into ceiling
-  const easeOut = t => 1 - (1 - t) * (1 - t);
+  const easeIn = t => t * t;           // accelerate upward — "sucked" into ceiling
   function tweenRise(to, dur, ease, onDone) {
     cancelAnimationFrame(riseRAF);
     const from = panelRise, t0 = performance.now();
@@ -1685,9 +1684,14 @@ import {
 
   // Record the player's choice and flash the saved confirmation, then raise the
   // whole panel like a door — revealing the level behind — and park it in the
-  // "dismissed" state. The next shot (advanceFormStep) lowers the banner back
-  // down, so the demo stays replayable without it reappearing on its own.
+  // "dismissed" state, where it remains for the rest of the session.
+  let consentSubmitted = false;
   function saveConsent(detail) {
+    if (consentSubmitted) return;
+    consentSubmitted = true;
+    // Submission is a user gesture, so use it to return immediately to game
+    // input and hide the cursor while the confirmation panel rises away.
+    captureMouse();
     document.getElementById('saved-detail').textContent = detail;
     cancelAnimationFrame(riseRAF);
     panelRise = 0;                      // confirmation fully covers the opening
@@ -1718,15 +1722,10 @@ import {
 
   let formStep = 0;
   function advanceFormStep() {
-    // From the saved/dismissed screen, the next shot brings the banner back —
-    // lowering the door back down from the ceiling if it had already lifted.
-    const st = terminalEl.dataset.state;
-    if (st === 'saved' || st === 'dismissed') {
-      clearTimeout(saveConsent._t);
-      cancelAnimationFrame(riseRAF);
-      setBannerState('banner');
-      tweenRise(0, 420, easeOut);
-    }
+    // Consent is final: firing after submission must not focus hidden controls
+    // or lower the dismissed panel back into the level.
+    if (consentSubmitted) return;
+
     const controls = bannerControls();
     if (controls.length === 0) return;
     if (formStep >= controls.length) formStep = 0;
@@ -1815,6 +1814,18 @@ import {
     return document.pointerLockElement === canvas;
   }
 
+  function captureMouse() {
+    if (mouseIsCaptured() || typeof canvas.requestPointerLock !== 'function') return;
+    try {
+      const lockRequest = canvas.requestPointerLock();
+      if (lockRequest && typeof lockRequest.catch === 'function') {
+        lockRequest.catch(error => console.warn('[doom] pointer lock failed', error));
+      }
+    } catch (error) {
+      console.warn('[doom] pointer lock failed', error);
+    }
+  }
+
   function reportMouseButtons(nextButtons) {
     if (mouseButtons === nextButtons) return;
     mouseButtons = nextButtons;
@@ -1848,16 +1859,7 @@ import {
     // attribution links. Once captured, every left click is an in-game shot.
     if (!captured && (!targetIsGame || formHitTest(ev.clientX, ev.clientY))) return;
 
-    if (!captured && typeof canvas.requestPointerLock === 'function') {
-      try {
-        const lockRequest = canvas.requestPointerLock();
-        if (lockRequest && typeof lockRequest.catch === 'function') {
-          lockRequest.catch(error => console.warn('[doom] pointer lock failed', error));
-        }
-      } catch (error) {
-        console.warn('[doom] pointer lock failed', error);
-      }
-    }
+    if (!captured) captureMouse();
 
     setMouseFire(true);
     addBulletHole();
@@ -2075,6 +2077,10 @@ import {
       if (u32[i+14] !== PLAYER_HEIGHT) continue;
       playerMobjOfs = i * 4;
       playerSpawned = true;
+      // Entering the level is also when the wall form becomes relevant. Drop
+      // the menu's pointer lock so the cookie controls can be clicked directly;
+      // clicking elsewhere on the canvas can capture it again for gameplay.
+      if (mouseIsCaptured()) document.exitPointerLock();
       tryStartLevelMusic();
       console.log(`[doom] player mobj.x at 0x${playerMobjOfs.toString(16)}`);
       return true;
@@ -2350,7 +2356,7 @@ import {
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   let demoRunning = false;
   async function runDemo() {
-    if (demoRunning) return;
+    if (demoRunning || consentSubmitted) return;
     demoRunning = true;
     setBannerState('banner');
     for (const id of ['c15-reject', 'c15-accept']) {
