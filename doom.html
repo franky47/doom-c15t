@@ -331,7 +331,7 @@ html, body {
 <!-- Gameplay hint. Sits just above the attribution bar so it's visible
      without crowding the game. Tells the player where the html-in-canvas
      form is and how to interact with it. -->
-<div id="tip">Consent banner ahead, between the pillars. Shoot to highlight, SPACE to choose.</div>
+<div id="tip">Click to capture mouse · ZQSD/WASD move · Mouse aim + shoot · Wheel weapons · SPACE use · ESC release</div>
 
 <!--
   One canvas. Real Doom renders into it. A real HTML form is a direct child
@@ -702,7 +702,7 @@ import {
     wasmResult = await WebAssembly.instantiateStreaming(
       // Version the binary URL so Chrome cannot reuse the pre-SFX wasm from
       // its memory cache after a normal or even hard page reload.
-      fetch('./doom-assets/doom.wasm?v=37d4a595'),
+      fetch('./doom-assets/doom.wasm?v=e1da8d75'),
       imports
     );
   } catch (e) {
@@ -1519,7 +1519,7 @@ import {
   }
 
   // ─── Bullet holes on the form ───
-  // Each time the player fires (KEY_FIRE / Control) we push a hole into
+  // Each time the player fires (left mouse or KEY_FIRE / Control) we push a hole into
   // this array.  overlayForm() paints the hole into the captured pixel
   // buffer before quantisation, so it becomes part of the wall texture
   // on the very next Doom tick — no wasm-side hack, no extra draw pass.
@@ -1585,16 +1585,22 @@ import {
   }
 
   // ─── Keyboard → Doom ───
-  // Strafe lives on A/D (not ,/.) so the comma and period can be typed
-  // into form inputs (e.g. "d.guy@gmail.com") without being swallowed
-  // by the game.  A/D match modern FPS muscle memory anyway.
+  // Use physical key positions for movement rather than layout-dependent
+  // characters. The same four keys are W/S/A/D on QWERTY and Z/S/Q/D on
+  // AZERTY, so both layouts get the expected FPS controls automatically.
+  const movementCode = new Map([
+    ['KeyW', doomExports.KEY_UPARROW],
+    ['KeyS', doomExports.KEY_DOWNARROW],
+    ['KeyA', doomExports.KEY_STRAFE_L],
+    ['KeyD', doomExports.KEY_STRAFE_R],
+  ]);
+  const heldMovementCodes = new Set();
+
   const doomKey = new Map([
     ['ArrowLeft',  doomExports.KEY_LEFTARROW],
     ['ArrowRight', doomExports.KEY_RIGHTARROW],
     ['ArrowUp',    doomExports.KEY_UPARROW],
     ['ArrowDown',  doomExports.KEY_DOWNARROW],
-    ['a',          doomExports.KEY_STRAFE_L],
-    ['d',          doomExports.KEY_STRAFE_R],
     ['Control',    doomExports.KEY_FIRE],
     [' ',          doomExports.KEY_USE],
     ['Shift',      doomExports.KEY_SHIFT],
@@ -1606,8 +1612,6 @@ import {
   ]);
 
   function translateKey(ev) {
-    // Normalise single-char keys to lowercase so Shift+A still matches
-    // the 'a' entry (strafe-left while running, for example).
     const key = ev.key.length === 1 ? ev.key.toLowerCase() : ev.key;
     if (doomKey.has(key)) return doomKey.get(key);
     if (ev.key.length === 1) return ev.key.charCodeAt(0);
@@ -1730,23 +1734,16 @@ import {
     formStep = (formStep + 1) % controls.length;
   }
 
-  // Keys that are always forwarded to Doom regardless of whether a
-  // form input holds focus. Only the arrows — A/D strafe, Shift run,
-  // and the comma/period keys are gated by focus so they type into
-  // inputs normally.  Without this set, holding Up then shooting
-  // (which focuses an input) would leave the ArrowUp keyup unhandled
-  // and the player would keep running forever.  Ctrl (fire) has its
-  // own always-forwarded path further down.
+  // Arrows and physical movement keys always reach Doom, even if shooting has
+  // moved DOM focus onto a banner control. This also guarantees every held key
+  // gets its matching release instead of leaving the player running forever.
   const ALWAYS_GAME_KEYS = new Set([
     'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
   ]);
 
   addEventListener('keydown', ev => {
-    // Fire key is global: it always fires the weapon, always records a
-    // bullet hole, and always advances the form cycle — regardless of
-    // whether a form input currently has focus.  Ctrl is a modifier so
-    // on its own it doesn't type anything into inputs, so intercepting
-    // it here is harmless to the typing path.
+    // Ctrl remains a keyboard fallback for fire. Mouse fire below uses Doom's
+    // native mouse-button path, so both inputs can be held independently.
     if (ev.key === 'Control') {
       doomExports.reportKeyDown(doomExports.KEY_FIRE);
       if (!ev.repeat) {
@@ -1756,30 +1753,45 @@ import {
       ev.preventDefault();
       return;
     }
-    // Movement keys: always forwarded, regardless of form focus. Means
-    // you can keep running while typing / shooting into the form, and
-    // held-down keys always get their matching keyup.
+
+    const movement = movementCode.get(ev.code);
+    if (movement !== undefined) {
+      if (!heldMovementCodes.has(ev.code)) {
+        heldMovementCodes.add(ev.code);
+        doomExports.reportKeyDown(movement);
+      }
+      ev.preventDefault();
+      return;
+    }
+
     if (ALWAYS_GAME_KEYS.has(ev.key)) {
       const k = translateKey(ev);
       if (k !== null && k !== undefined) doomExports.reportKeyDown(k);
       ev.preventDefault();
       return;
     }
-    if (formHasFocus()) return;           // let the form have its keys
+    if (formHasFocus()) return;
     const k = translateKey(ev);
     if (k === null || k === undefined) return;
     doomExports.reportKeyDown(k);
-    // Stop the browser from scrolling on arrows/space when doom has focus.
     ev.preventDefault();
   });
+
   addEventListener('keyup', ev => {
-    // Matching release for the fire key — goes to Doom regardless of
-    // focus so the weapon state stays consistent.
     if (ev.key === 'Control') {
       doomExports.reportKeyUp(doomExports.KEY_FIRE);
       ev.preventDefault();
       return;
     }
+
+    const movement = movementCode.get(ev.code);
+    if (movement !== undefined) {
+      heldMovementCodes.delete(ev.code);
+      doomExports.reportKeyUp(movement);
+      ev.preventDefault();
+      return;
+    }
+
     if (ALWAYS_GAME_KEYS.has(ev.key)) {
       const k = translateKey(ev);
       if (k !== null && k !== undefined) doomExports.reportKeyUp(k);
@@ -1791,6 +1803,101 @@ import {
     if (k === null || k === undefined) return;
     doomExports.reportKeyUp(k);
     ev.preventDefault();
+  });
+
+  // ─── Pointer lock + native Doom mouse input ───
+  const MOUSE_FIRE_BIT = 1 << 0;
+  const MOUSE_TURN_SCALE = 8;
+  let mouseButtons = 0;
+  let pendingMouseX = 0;
+
+  function mouseIsCaptured() {
+    return document.pointerLockElement === canvas;
+  }
+
+  function reportMouseButtons(nextButtons) {
+    if (mouseButtons === nextButtons) return;
+    mouseButtons = nextButtons;
+    doomExports.reportMouse(mouseButtons, 0, 0);
+  }
+
+  function setMouseFire(pressed) {
+    const next = pressed
+      ? mouseButtons | MOUSE_FIRE_BIT
+      : mouseButtons & ~MOUSE_FIRE_BIT;
+    reportMouseButtons(next);
+  }
+
+  function flushMouseMovement() {
+    if (!mouseIsCaptured() || !playerSpawned || pendingMouseX === 0) {
+      pendingMouseX = 0;
+      return;
+    }
+    const turn = Math.max(-4096, Math.min(4096,
+      Math.round(pendingMouseX * MOUSE_TURN_SCALE)));
+    pendingMouseX = 0;
+    doomExports.reportMouse(mouseButtons, turn, 0);
+  }
+
+  window.addEventListener('mousedown', ev => {
+    if (ev.button !== 0) return;
+    const captured = mouseIsCaptured();
+    const targetIsGame = ev.target === canvas || canvas.contains(ev.target);
+
+    // Before capture, preserve direct DOM interaction with the wall form and
+    // attribution links. Once captured, every left click is an in-game shot.
+    if (!captured && (!targetIsGame || formHitTest(ev.clientX, ev.clientY))) return;
+
+    if (!captured && typeof canvas.requestPointerLock === 'function') {
+      try {
+        const lockRequest = canvas.requestPointerLock();
+        if (lockRequest && typeof lockRequest.catch === 'function') {
+          lockRequest.catch(error => console.warn('[doom] pointer lock failed', error));
+        }
+      } catch (error) {
+        console.warn('[doom] pointer lock failed', error);
+      }
+    }
+
+    setMouseFire(true);
+    addBulletHole();
+    advanceFormStep();
+    ev.preventDefault();
+  }, true);
+
+  window.addEventListener('mouseup', ev => {
+    if (ev.button !== 0 || !(mouseButtons & MOUSE_FIRE_BIT)) return;
+    setMouseFire(false);
+    if (mouseIsCaptured()) ev.preventDefault();
+  }, true);
+
+  document.addEventListener('mousemove', ev => {
+    if (mouseIsCaptured() && playerSpawned) pendingMouseX += ev.movementX;
+  });
+
+  window.addEventListener('wheel', ev => {
+    if (!mouseIsCaptured() || !playerSpawned || ev.deltaY === 0) return;
+    doomExports.cycleWeapon(ev.deltaY < 0 ? -1 : 1);
+    ev.preventDefault();
+  }, { passive: false });
+
+  document.addEventListener('pointerlockchange', () => {
+    pendingMouseX = 0;
+    if (mouseIsCaptured()) canvas.focus();
+    else setMouseFire(false);
+  });
+  canvas.addEventListener('contextmenu', ev => {
+    if (mouseIsCaptured()) ev.preventDefault();
+  });
+
+  addEventListener('blur', () => {
+    for (const code of heldMovementCodes) {
+      doomExports.reportKeyUp(movementCode.get(code));
+    }
+    heldMovementCodes.clear();
+    doomExports.reportKeyUp(doomExports.KEY_FIRE);
+    setMouseFire(false);
+    pendingMouseX = 0;
   });
 
   // Focus the canvas so key events have a home target. (Tabindex=0 above.)
@@ -1819,6 +1926,9 @@ import {
   // Chromium's native routing does work and delivers the click normally
   // too, the second submit is ignored.
   function routeFormClick(e) {
+    // Pointer lock turns the mouse into relative game input; screen-space DOM
+    // hit testing would otherwise activate whichever control sits at centre.
+    if (mouseIsCaptured()) return;
     const under = document.elementFromPoint(e.clientX, e.clientY);
     if (!under || !terminalEl.contains(under)) {
       // Click outside the form — pull keyboard focus back to the canvas
@@ -2275,7 +2385,10 @@ import {
   // the last pass. overlayForm no-ops cleanly until its target is ready.
   let tickCount = 0;
   setInterval(() => {
-    try { doomExports.tickGame(); } catch (e) { console.error(e); }
+    try {
+      flushMouseMovement();
+      doomExports.tickGame();
+    } catch (e) { console.error(e); }
     composite();
     tickCount++;
     if ((tickCount % 10) === 0) findPatchCaches();
@@ -2306,6 +2419,13 @@ import {
         playDoomSound(name, channel, volume, separation);
       },
       stop: stopDoomSound,
+    },
+    input: {
+      get pointerLocked() { return mouseIsCaptured(); },
+      get mouseButtons() { return mouseButtons; },
+      movementCode,
+      captureMouse() { return canvas.requestPointerLock(); },
+      releaseMouse() { return document.exitPointerLock(); },
     },
 
     // Phase 2 — wall-texture overlay controls.
@@ -2445,7 +2565,7 @@ import {
     },
   };
 
-  console.log('[doom] ready. arrows/ctrl/space to play, shoot to highlight the consent banner, space to choose.');
+  console.log('[doom] ready. ZQSD/WASD + mouse to play, wheel switches weapons, SPACE uses, ESC releases the cursor.');
 })();
 </script>
 </body>
