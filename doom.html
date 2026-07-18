@@ -456,6 +456,118 @@ import {
   addEventListener('keydown', startMusicFromGesture, true);
   addEventListener('pointerdown', startMusicFromGesture, true);
 
+  // Doom's native mixer is bridged to Web Audio by four wasm imports. Every
+  // WAD sound is decoded up front so menu clicks, weapons, pickups, monsters,
+  // doors, and positional effects can start immediately on their Doom channel.
+  const AudioContextCtor = window.AudioContext || window.webkitAudioContext;
+  const sfxContext = AudioContextCtor ? new AudioContextCtor() : null;
+  const sfxBuffers = new Map();
+  const sfxChannels = new Map();
+  const sfxHistory = [];
+  const sfxMasterGain = sfxContext ? sfxContext.createGain() : null;
+  if (sfxMasterGain) sfxMasterGain.connect(sfxContext.destination);
+
+  function setSoundParams(state, volume, separation) {
+    state.gain.gain.value = Math.max(0, Math.min(1, volume / 127));
+    if (state.panner) {
+      state.panner.pan.value = Math.max(-1, Math.min(1, (separation - 128) / 128));
+    }
+  }
+
+  function releaseSoundChannel(channel, source) {
+    const state = sfxChannels.get(channel);
+    if (!state || state.source !== source) return;
+    sfxChannels.delete(channel);
+    state.source.disconnect();
+    state.gain.disconnect();
+    if (state.panner) state.panner.disconnect();
+  }
+
+  function stopDoomSound(channel) {
+    const state = sfxChannels.get(channel);
+    if (!state) return;
+    state.source.onended = null;
+    try { state.source.stop(); } catch (_) { /* already stopped */ }
+    releaseSoundChannel(channel, state.source);
+  }
+
+  function playDoomSound(name, channel, volume, separation) {
+    if (!sfxContext || !sfxMasterGain) return;
+    // A context can become suspended again after a tab switch or output-device
+    // change. Resume here as well as in the input handler; a source started
+    // while suspended remains queued and begins once resume succeeds.
+    if (sfxContext.state !== 'running') {
+      sfxContext.resume().catch(() => { /* next user gesture retries */ });
+    }
+    const buffer = sfxBuffers.get(name.toLowerCase());
+    if (!buffer) return;
+
+    stopDoomSound(channel);
+    const source = sfxContext.createBufferSource();
+    const gain = sfxContext.createGain();
+    const panner = typeof sfxContext.createStereoPanner === 'function'
+      ? sfxContext.createStereoPanner()
+      : null;
+    source.buffer = buffer;
+    source.connect(gain);
+    if (panner) {
+      gain.connect(panner);
+      panner.connect(sfxMasterGain);
+    } else {
+      gain.connect(sfxMasterGain);
+    }
+
+    const state = { name, source, gain, panner };
+    setSoundParams(state, volume, separation);
+    sfxChannels.set(channel, state);
+    source.onended = () => releaseSoundChannel(channel, source);
+    source.start();
+
+    sfxHistory.push({ name, channel, volume, separation, at: performance.now() });
+    if (sfxHistory.length > 100) sfxHistory.shift();
+  }
+
+  function doomSoundIsPlaying(channel) {
+    return sfxChannels.has(channel) ? 1 : 0;
+  }
+
+  function updateDoomSound(channel, volume, separation) {
+    const state = sfxChannels.get(channel);
+    if (state) setSoundParams(state, volume, separation);
+  }
+
+  async function preloadDoomSoundEffects() {
+    if (!sfxContext) {
+      console.warn('[doom] Web Audio is unavailable; sound effects disabled');
+      return;
+    }
+    try {
+      const manifestResponse = await fetch('./doom-assets/sfx/index.json');
+      if (!manifestResponse.ok) throw new Error(`SFX manifest HTTP ${manifestResponse.status}`);
+      const manifest = await manifestResponse.json();
+      await Promise.all(manifest.map(async ({ name }) => {
+        const response = await fetch(`./doom-assets/sfx/${name}.wav`);
+        if (!response.ok) throw new Error(`${name}.wav HTTP ${response.status}`);
+        const buffer = await sfxContext.decodeAudioData(await response.arrayBuffer());
+        sfxBuffers.set(name, buffer);
+      }));
+      console.log(`[doom] ${sfxBuffers.size} sound effects ready`);
+    } catch (error) {
+      console.warn('[doom] failed to preload sound effects', error);
+    }
+  }
+  const soundEffectsReady = preloadDoomSoundEffects();
+
+  function unlockSoundEffects(event) {
+    if (!event.isTrusted || !sfxContext || sfxContext.state === 'running') return;
+    sfxContext.resume()
+      .catch(error => console.warn('[doom] failed to enable sound effects', error));
+  }
+  // Keep these listeners: Chrome may suspend Web Audio again after a tab or
+  // output-device change, even though HTMLMediaElement music keeps playing.
+  addEventListener('keydown', unlockSoundEffects, true);
+  addEventListener('pointerdown', unlockSoundEffects, true);
+
   const ctx = canvas.getContext('2d', { alpha: false });
 
   // Feature detect. Chrome 138+ with canvas-draw-element flag exposes
@@ -545,6 +657,17 @@ import {
     runtimeControl: {
       timeInMilliseconds() { return BigInt(Math.trunc(performance.now())); },
     },
+    soundEffects: {
+      startSound(namePtr, nameLength, channel, volume, separation) {
+        const name = readUtf8(moduleMemory, namePtr, nameLength);
+        playDoomSound(name, channel, volume, separation);
+      },
+      stopSound(channel) { stopDoomSound(channel); },
+      soundIsPlaying(channel) { return doomSoundIsPlaying(channel); },
+      updateSoundParams(channel, volume, separation) {
+        updateDoomSound(channel, volume, separation);
+      },
+    },
     console: {
       onInfoMessage(ptr, len) { console.log(`[doom] ${readUtf8(moduleMemory, ptr, len)}`); },
       onErrorMessage(ptr, len) { console.error(`[doom] ${readUtf8(moduleMemory, ptr, len)}`); },
@@ -559,7 +682,9 @@ import {
   let wasmResult;
   try {
     wasmResult = await WebAssembly.instantiateStreaming(
-      fetch('doom-assets/doom.wasm'),
+      // Version the binary URL so Chrome cannot reuse the pre-SFX wasm from
+      // its memory cache after a normal or even hard page reload.
+      fetch('./doom-assets/doom.wasm?v=37d4a595'),
       imports
     );
   } catch (e) {
@@ -572,6 +697,11 @@ import {
 
   doomExports = wasmResult.instance.exports;
   moduleMemory = doomExports.memory;
+  const soundBridgeReady = WebAssembly.Module.imports(wasmResult.module)
+    .some(({ module, name }) => module === 'soundEffects' && name === 'startSound');
+  if (!soundBridgeReady) {
+    console.warn('[doom] loaded wasm has no sound-effects bridge; clear the cached binary');
+  }
 
   // ─────────────────────────────────────────────────────────────
   // PHASE 2 — paint the live HTML form onto a real Doom wall texture.
@@ -2111,6 +2241,9 @@ import {
   }, true);   // capture phase so Doom's key forwarder can't eat it first
 
   // ─── Boot Doom ───
+  // Ensure the first menu action can make its authentic sound instead of
+  // racing the initial WAV fetch/decode work.
+  await soundEffectsReady;
   doomExports.initGame();
 
   // Doom's own 35Hz tick. After each tick the game's drawFrame callback
@@ -2143,6 +2276,18 @@ import {
       get playerSpawned() { return playerSpawned; },
       get started() { return musicStarted; },
       start: tryStartLevelMusic,
+    },
+    soundEffects: {
+      bridgeReady: soundBridgeReady,
+      context: sfxContext,
+      masterGain: sfxMasterGain,
+      buffers: sfxBuffers,
+      channels: sfxChannels,
+      history: sfxHistory,
+      play(name, channel = 0, volume = 127, separation = 128) {
+        playDoomSound(name, channel, volume, separation);
+      },
+      stop: stopDoomSound,
     },
 
     // Phase 2 — wall-texture overlay controls.

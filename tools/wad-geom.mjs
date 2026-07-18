@@ -3,7 +3,7 @@
 // bordering the pool).
 import { readFileSync } from 'node:fs';
 
-const WAD_EMBEDDED_OFFSET = 301190;
+const WAD_EMBEDDED_OFFSET = 301913;
 const wasm = readFileSync(new URL('../doom-assets/doom.wasm', import.meta.url));
 
 // The WAD sits inside the wasm at the known offset. Read header from there.
