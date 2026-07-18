@@ -412,6 +412,50 @@ import {
   const terminalEl  = document.getElementById('uac-terminal');
   const missing     = document.getElementById('missing-api');
 
+  // Preload E1M1 while Doom's menu is open, but do not start it until the
+  // player object appears in the level. If autoplay policy rejects that
+  // timer-driven attempt, the next real key or pointer gesture retries it.
+  const levelMusic = new Audio('./doom-assets/music/D_E1M1.m4a');
+  levelMusic.loop = true;
+  levelMusic.preload = 'auto';
+  let playerSpawned = false;
+  let musicStarted = false;
+  let musicStartPending = false;
+
+  function stopMusicStartRetries() {
+    removeEventListener('keydown', startMusicFromGesture, true);
+    removeEventListener('pointerdown', startMusicFromGesture, true);
+  }
+
+  function tryStartLevelMusic() {
+    if (!playerSpawned || musicStarted || musicStartPending) return;
+    musicStartPending = true;
+    const playback = levelMusic.play();
+    if (!playback || typeof playback.then !== 'function') {
+      musicStarted = true;
+      musicStartPending = false;
+      stopMusicStartRetries();
+      return;
+    }
+    playback.then(() => {
+      musicStarted = true;
+      musicStartPending = false;
+      stopMusicStartRetries();
+    }).catch(error => {
+      musicStartPending = false;
+      if (error.name !== 'NotAllowedError') {
+        console.warn('[doom] failed to start E1M1 music', error);
+      }
+    });
+  }
+
+  function startMusicFromGesture(event) {
+    if (event.isTrusted) tryStartLevelMusic();
+  }
+
+  addEventListener('keydown', startMusicFromGesture, true);
+  addEventListener('pointerdown', startMusicFromGesture, true);
+
   const ctx = canvas.getContext('2d', { alpha: false });
 
   // Feature detect. Chrome 138+ with canvas-draw-element flag exposes
@@ -1772,6 +1816,8 @@ import {
       if (u32[i+13] !== PLAYER_RADIUS) continue;
       if (u32[i+14] !== PLAYER_HEIGHT) continue;
       playerMobjOfs = i * 4;
+      playerSpawned = true;
+      tryStartLevelMusic();
       console.log(`[doom] player mobj.x at 0x${playerMobjOfs.toString(16)}`);
       return true;
     }
@@ -2092,6 +2138,12 @@ import {
     canvas:  doomCanvas,
     terminal: terminalEl,
     composite,
+    music: {
+      audio: levelMusic,
+      get playerSpawned() { return playerSpawned; },
+      get started() { return musicStarted; },
+      start: tryStartLevelMusic,
+    },
 
     // Phase 2 — wall-texture overlay controls.
     formTarget,
