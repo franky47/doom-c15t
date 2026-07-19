@@ -368,7 +368,19 @@ html, body {
 #missing-api .box { max-width: 560px; border: 2px solid #6a0f00; padding: 28px; }
 #missing-api h2 { color: #ff3b1f; margin-bottom: 12px; font-size: 26px; text-shadow: 0 0 6px #ff3b1f; }
 #missing-api code { background: #1a0b08; padding: 2px 6px; color: #ffcc66; }
-#missing-api a { color: #ffcc66; text-underline-offset: 3px; }
+#missing-api .flag-address {
+  appearance: none;
+  border: 0;
+  padding: 0;
+  background: none;
+  color: #ffcc66;
+  font: inherit;
+  cursor: pointer;
+  text-decoration: underline;
+  text-underline-offset: 3px;
+}
+#missing-api .flag-address:focus-visible { outline: 2px solid #ffcc66; outline-offset: 3px; }
+#missing-api .copy-status { color: #ffcc66; }
 </style>
 </head>
 <body>
@@ -474,7 +486,7 @@ html, body {
   <div class="box">
     <h2>HTML-IN-CANVAS REQUIRED</h2>
     <p>This demo uses <code>drawElementImage()</code>, part of the WICG html-in-canvas proposal.</p>
-    <p style="margin-top:10px">Open in desktop Chrome with <a href="chrome://flags/#canvas-draw-element" target="_blank" rel="noopener noreferrer"><code>chrome://flags/#canvas-draw-element</code></a> enabled.</p>
+    <p style="margin-top:10px">In desktop Chrome, copy <button type="button" class="flag-address"><code>chrome://flags/#canvas-draw-element</code></button>, paste it into a new tab, and enable the flag. <span class="copy-status" aria-live="polite"></span></p>
   </div>
 </div>
 
@@ -494,7 +506,43 @@ import {
   const missing     = document.getElementById('missing-api');
   const loading     = document.getElementById('loading-indicator');
   const ctx         = canvas.getContext('2d', { alpha: false });
+  const flagAddress = 'chrome://flags/#canvas-draw-element';
   let loadingFinished = false;
+
+  async function copyFlagAddress() {
+    if (navigator.clipboard?.writeText) {
+      try {
+        await navigator.clipboard.writeText(flagAddress);
+        return;
+      } catch {
+        // Fall back for browsers that expose the API but deny permission.
+      }
+    }
+
+    const input = document.createElement('textarea');
+    input.value = flagAddress;
+    input.setAttribute('readonly', '');
+    input.style.position = 'fixed';
+    input.style.opacity = '0';
+    document.body.appendChild(input);
+    input.select();
+    const copied = document.execCommand('copy');
+    input.remove();
+    if (!copied) throw new Error('Copy command was rejected');
+  }
+
+  missing.addEventListener('click', async event => {
+    const button = event.target.closest('.flag-address');
+    if (!button) return;
+
+    const status = button.parentElement.querySelector('.copy-status');
+    try {
+      await copyFlagAddress();
+      status.textContent = 'Copied — paste it into a new tab.';
+    } catch {
+      status.textContent = 'Could not copy; select and copy the address manually.';
+    }
+  });
 
   function finishLoading() {
     if (loadingFinished || !loading) return;
@@ -524,11 +572,11 @@ import {
     missing.querySelector('.box').innerHTML = isDesktopChrome
       ? `<h2>CHROME FLAG REQUIRED</h2>
          <p>Chrome is supported, but <code>drawElementImage()</code> is unavailable.</p>
-         <p style="margin-top:10px">Open <a href="chrome://flags/#canvas-draw-element" target="_blank" rel="noopener noreferrer"><code>chrome://flags/#canvas-draw-element</code></a>, set it to <strong>Enabled</strong>, then relaunch Chrome and reload this page.</p>
+         <p style="margin-top:10px">Copy <button type="button" class="flag-address"><code>chrome://flags/#canvas-draw-element</code></button>, paste it into a new tab, set it to <strong>Enabled</strong>, then relaunch Chrome and reload this page. <span class="copy-status" aria-live="polite"></span></p>
          <p style="margin-top:10px">If the flag is not listed, update Chrome first.</p>`
       : `<h2>DESKTOP CHROME REQUIRED</h2>
          <p>This demo depends on the experimental <code>drawElementImage()</code> canvas API, which is not available in this browser.</p>
-         <p style="margin-top:10px">Open this page in desktop Google Chrome, then enable <a href="chrome://flags/#canvas-draw-element" target="_blank" rel="noopener noreferrer"><code>chrome://flags/#canvas-draw-element</code></a> and relaunch Chrome.</p>`;
+         <p style="margin-top:10px">Open this page in desktop Google Chrome, copy <button type="button" class="flag-address"><code>chrome://flags/#canvas-draw-element</code></button>, paste it into a new tab, enable the flag, and relaunch Chrome. <span class="copy-status" aria-live="polite"></span></p>`;
     missing.classList.add('visible');
     return;
   }
