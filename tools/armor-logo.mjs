@@ -2,7 +2,7 @@
 // downscaling — hand-authored so the monogram stays crisp at sprite size).
 //   node tools/armor-logo.mjs
 // Badge = amber rounded square; "IN" teal on top; bottom is a teal box with
-// "TH" knocked out in amber. Writes ARM2A0/ARM2B0 PNGs (+ @16x previews).
+// "TH" knocked out in amber. Writes matching ARM1 and ARM2 PNGs (+ @16x previews).
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { encodePNG, upscale } from './doom-gfx.mjs';
 
@@ -18,8 +18,8 @@ const G = {
 };
 
 const FRAMES = [
-  { lump: 'ARM1A0', amber: '#FFC803', teal: '#182D37' },
-  { lump: 'ARM1B0', amber: '#faa20a', teal: '#134d5b' },
+  { lumps: ['ARM1A0', 'ARM2A0'], amber: '#FFC803', teal: '#182D37' },
+  { lumps: ['ARM1B0', 'ARM2B0'], amber: '#faa20a', teal: '#134d5b' },
 ];
 
 const hex = (h) => [
@@ -62,8 +62,12 @@ for (const f of FRAMES) {
     rgba[o + 3] = 0;
   }
 
-  writeFileSync(new URL(`./${f.lump}.png`, outDir), encodePNG(SPRITE.w, SPRITE.h, rgba));
+  const png = encodePNG(SPRITE.w, SPRITE.h, rgba);
   const up = upscale(SPRITE.w, SPRITE.h, rgba, 16);
-  writeFileSync(new URL(`./${f.lump}@16x.png`, outDir), encodePNG(up.width, up.height, up.rgba));
-  console.log(`${f.lump}: badge ${BADGE}x${BADGE} @ x+${ox} in ${SPRITE.w}x${SPRITE.h}`);
+  const preview = encodePNG(up.width, up.height, up.rgba);
+  for (const lump of f.lumps) {
+    writeFileSync(new URL(`./${lump}.png`, outDir), png);
+    writeFileSync(new URL(`./${lump}@16x.png`, outDir), preview);
+    console.log(`${lump}: badge ${BADGE}x${BADGE} @ x+${ox} in ${SPRITE.w}x${SPRITE.h}`);
+  }
 }
