@@ -1829,6 +1829,12 @@ import {
   // Record the player's choice and flash the saved confirmation, then raise the
   // whole panel like a door — revealing the level behind — and park it in the
   // "dismissed" state, where it remains for the rest of the session.
+  const consentSoundChannels = {
+    button: 'consent-button',
+    checkbox: 'consent-checkbox',
+    dismiss: 'consent-dismiss',
+  };
+
   let consentSubmitted = false;
   function saveConsent(detail) {
     if (!formInteractionEnabled || consentSubmitted) return;
@@ -1845,9 +1851,21 @@ import {
     clearTimeout(saveConsent._t);
     // Hold the confirmation briefly, then open the door up into the ceiling.
     saveConsent._t = setTimeout(() => {
+      playDoomSound('doropn', consentSoundChannels.dismiss, 127, 128);
       tweenRise(formTarget.h, 650, easeIn, () => { terminalEl.dataset.state = 'dismissed'; });
     }, 1500);
   }
+
+  terminalEl.querySelectorAll('button').forEach(button => {
+    button.addEventListener('click', () => {
+      playDoomSound('bdopn', consentSoundChannels.button, 127, 128);
+    });
+  });
+  terminalEl.querySelectorAll('input[type="checkbox"]:not(:disabled)').forEach(checkbox => {
+    checkbox.addEventListener('change', () => {
+      playDoomSound('tink', consentSoundChannels.checkbox, 127, 128);
+    });
+  });
 
   document.getElementById('c15-reject').addEventListener('click', () => saveConsent('ALL REJECTED'));
   document.getElementById('c15-accept').addEventListener('click', () => saveConsent('ALL ACCEPTED'));
