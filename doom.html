@@ -321,7 +321,7 @@ html, body {
   background: rgba(0, 0, 0, 0.55);
   color: #777;
   font-family: 'Share Tech Mono', 'Courier New', monospace;
-  font-size: 11px;
+  font-size: 10px;
   line-height: 1.4;
   letter-spacing: 0.02em;
   text-align: center;
@@ -334,6 +334,7 @@ html, body {
   border-bottom: 1px dotted #555;
 }
 #attribution a:hover { color: #c0c0c0; border-bottom-color: #888; }
+#attribution .credit-line { margin-top: 2px; }
 
 /* Gameplay hint sitting above the attribution bar. Warmer tint so it
    reads as a hint, not legalese. Bold so it's easy to spot against
@@ -341,7 +342,7 @@ html, body {
 #tip {
   position: fixed;
   left: 0; right: 0;
-  bottom: 42px;
+  bottom: 52px;
   text-align: center;
   font-family: 'Share Tech Mono', 'Courier New', monospace;
   font-size: 13px;
@@ -414,11 +415,17 @@ html, body {
      visible. Kept deliberately small and low-contrast so it's out of
      the way during play but still readable. -->
 <div id="attribution">
-  DOOM &copy; 1993 id Software &mdash; freely-redistributable shareware episode, under id&rsquo;s original shareware licence &middot;
-  engine: GPL v2 &middot;
-  not affiliated with / endorsed by id Software, Bethesda, ZeniMax or Microsoft &middot;
-  <a href="https://store.steampowered.com/app/2280/DOOM_1993/" target="_blank" rel="noopener">buy the full game</a> &middot;
-  tech demo by <a href="https://solarise.dev" target="_blank" rel="noopener">Robin Metcalfe</a>
+  <div>
+    DOOM &copy; 1993 id Software &mdash; freely-redistributable shareware episode, under id&rsquo;s original shareware licence &middot;
+    engine: GPL v2 &middot;
+    not affiliated with / endorsed by id Software, Bethesda, ZeniMax or Microsoft &middot;
+    <a href="https://store.steampowered.com/app/2280/DOOM_1993/" target="_blank" rel="noopener">buy the full game</a>
+  </div>
+  <div class="credit-line">
+    Original HTML-in-canvas DOOM demo by <a href="https://solarise.dev/demos/working-contact-form-inside-doom/about" target="_blank" rel="noopener">Robin Metcalfe</a> &middot;
+    c15t adaptation by <a href="https://francoisbest.com" target="_blank" rel="noopener">Fran&ccedil;ois Best</a> &middot;
+    <a href="https://github.com/franky47/doom-c15t" target="_blank" rel="noopener">source on GitHub</a>
+  </div>
 </div>
 
 <!-- Gameplay hint. Sits just above the attribution bar so it's visible

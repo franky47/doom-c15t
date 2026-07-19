@@ -2,6 +2,8 @@
 
 A static DOOM demo that renders a live HTML consent form into the game world with the experimental html-in-canvas API.
 
+Inspired by and built on top of [Robin Metcalfe’s original HTML-in-canvas DOOM demo](https://solarise.dev/demos/working-contact-form-inside-doom/about).
+
 ## Run locally
 
 Node.js 20 or newer is required.
