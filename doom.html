@@ -438,7 +438,7 @@ html, body {
 -->
 <canvas id="game" layoutsubtree tabindex="0">
 
-  <div id="uac-terminal" data-state="banner">
+  <div id="uac-terminal" data-state="banner" inert>
 
     <!-- c15t consent banner: title + description + Reject/Accept/Customize.
          Real <button> elements, so keyboard focus (shoot to highlight) and
@@ -588,6 +588,9 @@ import {
   levelMusic.loop = true;
   levelMusic.preload = 'auto';
   let playerSpawned = false;
+  // Keep the live consent DOM inert while Doom is still in its menus. It is
+  // enabled only after the player exists and pointer lock has been released.
+  let formInteractionEnabled = false;
   let musicStarted = false;
   let musicStartPending = false;
 
@@ -1828,7 +1831,7 @@ import {
   // "dismissed" state, where it remains for the rest of the session.
   let consentSubmitted = false;
   function saveConsent(detail) {
-    if (consentSubmitted) return;
+    if (!formInteractionEnabled || consentSubmitted) return;
     consentSubmitted = true;
     // Submission is a user gesture, so use it to return immediately to game
     // input and hide the cursor while the confirmation panel rises away.
@@ -1863,9 +1866,9 @@ import {
 
   let formStep = 0;
   function advanceFormStep() {
-    // Consent is final: firing after submission must not focus hidden controls
-    // or lower the dismissed panel back into the level.
-    if (consentSubmitted) return;
+    // Menu input must never focus or activate the live wall DOM. Consent is
+    // also final: firing after submission must not focus hidden controls.
+    if (!formInteractionEnabled || consentSubmitted) return;
 
     const controls = bannerControls();
     if (controls.length === 0) return;
@@ -1955,6 +1958,12 @@ import {
     return document.pointerLockElement === canvas;
   }
 
+  function enableFormInteraction() {
+    if (formInteractionEnabled || !playerSpawned || mouseIsCaptured()) return;
+    formInteractionEnabled = true;
+    terminalEl.inert = false;
+  }
+
   function captureMouse() {
     if (mouseIsCaptured() || typeof canvas.requestPointerLock !== 'function') return;
     try {
@@ -2026,8 +2035,12 @@ import {
 
   document.addEventListener('pointerlockchange', () => {
     pendingMouseX = 0;
-    if (mouseIsCaptured()) canvas.focus();
-    else setMouseFire(false);
+    if (mouseIsCaptured()) {
+      canvas.focus();
+    } else {
+      setMouseFire(false);
+      enableFormInteraction();
+    }
   });
   canvas.addEventListener('contextmenu', ev => {
     if (mouseIsCaptured()) ev.preventDefault();
@@ -2069,9 +2082,10 @@ import {
   // Chromium's native routing does work and delivers the click normally
   // too, the second submit is ignored.
   function routeFormClick(e) {
-    // Pointer lock turns the mouse into relative game input; screen-space DOM
-    // hit testing would otherwise activate whichever control sits at centre.
-    if (mouseIsCaptured()) return;
+    // Menu clicks must not leak into the live consent DOM. Pointer lock turns
+    // the mouse into relative game input; screen-space DOM hit testing would
+    // otherwise activate whichever control sits at centre.
+    if (!formInteractionEnabled || mouseIsCaptured()) return;
     const under = document.elementFromPoint(e.clientX, e.clientY);
     if (!under || !terminalEl.contains(under)) {
       // Click outside the form — pull keyboard focus back to the canvas
@@ -2219,9 +2233,11 @@ import {
       playerMobjOfs = i * 4;
       playerSpawned = true;
       // Entering the level is also when the wall form becomes relevant. Drop
-      // the menu's pointer lock so the cookie controls can be clicked directly;
-      // clicking elsewhere on the canvas can capture it again for gameplay.
+      // the menu's pointer lock and keep the DOM inert until pointerlockchange
+      // confirms that the cursor is free. If it was already free, enable the
+      // controls immediately at spawn.
       if (mouseIsCaptured()) document.exitPointerLock();
+      else enableFormInteraction();
       tryStartLevelMusic();
       console.log(`[doom] player mobj.x at 0x${playerMobjOfs.toString(16)}`);
       return true;
