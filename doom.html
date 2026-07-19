@@ -16,6 +16,61 @@ html, body {
   overscroll-behavior: none;
 }
 
+/* Asset-free pixel loader. It sits over the existing black canvas but below
+   the gameplay hint and attribution, then disappears after the first frame. */
+#loading-indicator {
+  position: fixed;
+  inset: 0;
+  z-index: 900;
+  display: grid;
+  place-items: center;
+  color: #a08060;
+  pointer-events: none;
+  transition: opacity 140ms steps(2, end);
+}
+#loading-indicator.is-hidden { opacity: 0; }
+#loading-indicator svg {
+  display: block;
+  width: 250px;
+  height: auto;
+  overflow: visible;
+  shape-rendering: crispEdges;
+  filter: drop-shadow(0 0 3px rgba(160, 128, 96, 0.25));
+}
+.loading-dot {
+  opacity: 0.16;
+  animation: loading-dot 1.2s steps(1, end) infinite;
+}
+.loading-dot:nth-of-type(2) { animation-delay: 0.2s; }
+.loading-dot:nth-of-type(3) { animation-delay: 0.4s; }
+.loading-glitch-main { animation: loading-glitch-main 2.4s steps(1, end) infinite; }
+.loading-glitch-ghost {
+  color: #6d2a18;
+  opacity: 0;
+  animation: loading-glitch-ghost 2.4s steps(1, end) infinite;
+}
+@keyframes loading-dot {
+  0%, 18% { opacity: 0.16; }
+  19%, 67% { opacity: 1; }
+  68%, 100% { opacity: 0.16; }
+}
+@keyframes loading-glitch-main {
+  0%, 76%, 82%, 88%, 100% { transform: translate(0, 0); opacity: 1; }
+  77% { transform: translate(1px, 0); opacity: 0.76; }
+  79% { transform: translate(-1px, 1px); opacity: 1; }
+  85% { transform: translate(1px, -1px); opacity: 0.82; }
+}
+@keyframes loading-glitch-ghost {
+  0%, 76%, 82%, 88%, 100% { transform: translate(0, 0); opacity: 0; }
+  77%, 79% { transform: translate(-2px, 0); opacity: 0.8; }
+  85% { transform: translate(2px, 1px); opacity: 0.68; }
+}
+@media (prefers-reduced-motion: reduce) {
+  .loading-dot, .loading-glitch-main { animation: none; }
+  .loading-dot { opacity: 1; }
+  .loading-glitch-ghost { display: none; }
+}
+
 /* ─────────────────────────────────────────────────────────────
    Main canvas. layoutsubtree = its children are real DOM that
    get laid out off-screen (hit-testable, focusable, inspectable)
@@ -317,6 +372,31 @@ html, body {
 </head>
 <body>
 
+<div id="loading-indicator" role="status" aria-label="Loading...">
+  <svg viewBox="-1 0 52 9" aria-hidden="true">
+    <defs>
+      <path id="loading-word" fill="currentColor" d="M0 0h1v1H0zM0 1h1v1H0zM0 2h1v1H0zM0 3h1v1H0zM0 4h1v1H0zM0 5h1v1H0zM0 6h5v1H0zM7 0h3v1H7zM6 1h1v1H6zM10 1h1v1h-1zM6 2h1v1H6zM10 2h1v1h-1zM6 3h1v1H6zM10 3h1v1h-1zM6 4h1v1H6zM10 4h1v1h-1zM6 5h1v1H6zM10 5h1v1h-1zM7 6h3v1H7zM13 0h3v1h-3zM12 1h1v1h-1zM16 1h1v1h-1zM12 2h1v1h-1zM16 2h1v1h-1zM12 3h5v1h-5zM12 4h1v1h-1zM16 4h1v1h-1zM12 5h1v1h-1zM16 5h1v1h-1zM12 6h1v1h-1zM16 6h1v1h-1zM18 0h4v1h-4zM18 1h1v1h-1zM22 1h1v1h-1zM18 2h1v1h-1zM22 2h1v1h-1zM18 3h1v1h-1zM22 3h1v1h-1zM18 4h1v1h-1zM22 4h1v1h-1zM18 5h1v1h-1zM22 5h1v1h-1zM18 6h4v1h-4zM24 0h5v1h-5zM26 1h1v1h-1zM26 2h1v1h-1zM26 3h1v1h-1zM26 4h1v1h-1zM26 5h1v1h-1zM24 6h5v1h-5zM30 0h1v1h-1zM34 0h1v1h-1zM30 1h2v1h-2zM34 1h1v1h-1zM30 2h1v1h-1zM32 2h1v1h-1zM34 2h1v1h-1zM30 3h1v1h-1zM33 3h2v1h-2zM30 4h1v1h-1zM34 4h1v1h-1zM30 5h1v1h-1zM34 5h1v1h-1zM30 6h1v1h-1zM34 6h1v1h-1zM37 0h3v1h-3zM36 1h1v1h-1zM40 1h1v1h-1zM36 2h1v1h-1zM36 3h1v1h-1zM38 3h3v1h-3zM36 4h1v1h-1zM40 4h1v1h-1zM36 5h1v1h-1zM40 5h1v1h-1zM37 6h3v1h-3z"/>
+      <g id="loading-dots" fill="currentColor">
+        <rect x="43" y="6" width="1" height="1"/>
+        <rect x="46" y="6" width="1" height="1"/>
+        <rect x="49" y="6" width="1" height="1"/>
+      </g>
+    </defs>
+    <g transform="translate(0 1)">
+      <g class="loading-glitch-ghost">
+        <use href="#loading-word"/>
+        <use href="#loading-dots"/>
+      </g>
+      <g class="loading-glitch-main">
+        <use href="#loading-word"/>
+        <rect class="loading-dot" x="43" y="6" width="1" height="1" fill="currentColor"/>
+        <rect class="loading-dot" x="46" y="6" width="1" height="1" fill="currentColor"/>
+        <rect class="loading-dot" x="49" y="6" width="1" height="1" fill="currentColor"/>
+      </g>
+    </g>
+  </svg>
+</div>
+
 <!-- Attribution bar. Fixed-position so a fullscreen canvas keeps it
      visible. Kept deliberately small and low-contrast so it's out of
      the way during play but still readable. -->
@@ -411,7 +491,17 @@ import {
   const canvas      = document.getElementById('game');
   const terminalEl  = document.getElementById('uac-terminal');
   const missing     = document.getElementById('missing-api');
+  const loading     = document.getElementById('loading-indicator');
   const ctx         = canvas.getContext('2d', { alpha: false });
+  let loadingFinished = false;
+
+  function finishLoading() {
+    if (loadingFinished || !loading) return;
+    loadingFinished = true;
+    loading.setAttribute('aria-hidden', 'true');
+    loading.classList.add('is-hidden');
+    setTimeout(() => loading.remove(), 180);
+  }
 
   // Feature detection is authoritative: if another browser implements the API,
   // let it run. Browser detection is used only to tailor the recovery message.
@@ -631,6 +721,7 @@ import {
   const doomCtx = doomCanvas.getContext('2d', { alpha: false });
   let doomImageData = null;
   let doomReady = false;
+  let doomHasFrame = false;
   let doomW = 320, doomH = 200;
 
   // ─── Load and start doom.wasm ───
@@ -670,6 +761,7 @@ import {
           dst[i + 3] = 255;
         }
         doomCtx.putImageData(doomImageData, 0, 0);
+        doomHasFrame = true;
       },
     },
     runtimeControl: {
@@ -2315,6 +2407,7 @@ import {
       // Doom framebuffer → main canvas, scaled, pixelated.
       ctx.imageSmoothingEnabled = false;
       ctx.drawImage(doomCanvas, 0, 0, doomW, doomH, dx, dy, dw, dh);
+      if (doomHasFrame) finishLoading();
     }
 
     // Remember where Doom's framebuffer landed on the main canvas, in CSS
