@@ -1,0 +1,16 @@
+.DS_Store
+.pi/
+.vercel/
+dist/
+node_modules/
+*.mov
+*.mp4
+*.png
+*.txt
+tools/
+doom-assets/doom.wasm.bak
+doom-assets/sprites/
+doom-assets/music/c15t-doom Project/
+doom-assets/music/*.mid
+doom-assets/music/*.mus
+doom-assets/music/*.json
