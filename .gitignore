@@ -3,5 +3,10 @@
 .vercel/
 dist/
 node_modules/
-/doom-c15t.mov
-/doom-c15t-sfx.mp4
+*.mov
+*.mp4
+*.png
+*.txt
+pnpm-lock.yaml
+/doom-assets/music/c15t-doom Project/Backup/
+/doom-assets/music/c15t-doom Project/Samples/
