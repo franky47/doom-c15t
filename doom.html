@@ -261,8 +261,7 @@ html, body {
   font-weight: 600;
 }
 
-/* Customize view — c15t's five consent categories (we surface four; the
-   necessary one is locked on). */
+/* Customize view with Necessary locked on and Analytics optional. */
 #uac-terminal .c15-cats {
   display: flex;
   flex-direction: column;
@@ -522,8 +521,6 @@ html, body {
       <div class="c15-cats">
         <label class="cat"><input type="checkbox" id="cat-necessary" checked disabled><span>Strictly Necessary</span></label>
         <label class="cat"><input type="checkbox" id="cat-measurement"><span>Analytics</span></label>
-        <label class="cat"><input type="checkbox" id="cat-marketing"><span>Marketing</span></label>
-        <label class="cat"><input type="checkbox" id="cat-experience"><span>Experience</span></label>
       </div>
       <div class="c15-actions">
         <button type="button" class="c15-btn reject" id="c15-back">Back</button>
@@ -557,8 +554,6 @@ html, body {
     <div class="privacy-categories">
       <label><input type="checkbox" checked disabled>Strictly Necessary</label>
       <label><input type="checkbox" id="privacy-cat-measurement">Analytics</label>
-      <label><input type="checkbox" id="privacy-cat-marketing">Marketing</label>
-      <label><input type="checkbox" id="privacy-cat-experience">Experience</label>
     </div>
     <div class="privacy-actions">
       <button type="submit" value="cancel">Cancel</button>
@@ -1876,7 +1871,7 @@ import { setDatabuddyMeasurementConsent } from './doom-assets/databuddy-consent.
   // customize view the locked "necessary" checkbox is skipped.
   function bannerControls() {
     const ids = terminalEl.dataset.state === 'customize'
-      ? ['cat-measurement', 'cat-marketing', 'cat-experience', 'c15-back', 'c15-save']
+      ? ['cat-measurement', 'c15-back', 'c15-save']
       : ['c15-reject', 'c15-accept', 'c15-customize'];
     return ids.map(id => document.getElementById(id)).filter(Boolean);
   }
@@ -1958,51 +1953,38 @@ import { setDatabuddyMeasurementConsent } from './doom-assets/databuddy-consent.
     });
   });
 
-  const optionalConsentNames = ['measurement', 'marketing', 'experience'];
-  function setAllOptionalConsents(enabled) {
-    for (const name of optionalConsentNames) {
-      document.getElementById('cat-' + name).checked = enabled;
-    }
-  }
+  const measurementConsent = document.getElementById('cat-measurement');
 
   document.getElementById('c15-reject').addEventListener('click', () => {
-    setAllOptionalConsents(false);
-    saveConsent('ALL REJECTED', false);
+    measurementConsent.checked = false;
+    saveConsent('ANALYTICS OFF', false);
   });
   document.getElementById('c15-accept').addEventListener('click', () => {
-    setAllOptionalConsents(true);
-    saveConsent('ALL ACCEPTED', true);
+    measurementConsent.checked = true;
+    saveConsent('ANALYTICS ON', true);
   });
   document.getElementById('c15-customize').addEventListener('click', () => {
-    // Open the category toggles; highlight the first one (next shot → marketing).
+    // Open the category toggle; highlight it first (next shot → Back).
     setBannerState('customize', 'cat-measurement', 1);
   });
   document.getElementById('c15-back').addEventListener('click', () => {
     setBannerState('banner', 'c15-reject', 1);
   });
   document.getElementById('c15-save').addEventListener('click', () => {
-    const on = optionalConsentNames
-      .filter(c => document.getElementById('cat-' + c).checked);
-    const detail = on.length
-      ? on.map(c => c.toUpperCase()).join(' ') + ' ON'
-      : 'ONLY NECESSARY';
-    saveConsent(detail, on.includes('measurement'));
+    saveConsent(
+      measurementConsent.checked ? 'ANALYTICS ON' : 'ONLY NECESSARY',
+      measurementConsent.checked,
+    );
   });
+  const privacyMeasurementConsent =
+    document.getElementById('privacy-cat-measurement');
   privacySettings.addEventListener('click', () => {
-    for (const name of optionalConsentNames) {
-      document.getElementById('privacy-cat-' + name).checked =
-        document.getElementById('cat-' + name).checked;
-    }
+    privacyMeasurementConsent.checked = measurementConsent.checked;
     privacyDialog.showModal();
   });
   document.getElementById('privacy-save').addEventListener('click', () => {
-    for (const name of optionalConsentNames) {
-      document.getElementById('cat-' + name).checked =
-        document.getElementById('privacy-cat-' + name).checked;
-    }
-    setDatabuddyMeasurementConsent(
-      document.getElementById('privacy-cat-measurement').checked,
-    );
+    measurementConsent.checked = privacyMeasurementConsent.checked;
+    setDatabuddyMeasurementConsent(privacyMeasurementConsent.checked);
   });
 
   let formStep = 0;
