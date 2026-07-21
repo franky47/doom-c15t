@@ -69,11 +69,17 @@ export function setDatabuddyMeasurementConsent(enabled, target = globalThis) {
 
   if (enabled) {
     if (!wasEnabled) {
+      const disabledStub = target.databuddy?.options?.clientId === '';
       clearDatabuddyOptOut(target);
-      target.databuddyOptIn?.();
+      if (disabledStub) target.databuddyOptIn?.();
+      else target.databuddy?.clear?.();
     }
     if (target.databuddy?.options) {
       target.databuddy.options.disabled = false;
+      if (!wasEnabled) {
+        target.databuddy.screenView?.();
+        target.databuddy.flush?.();
+      }
     }
     loadDatabuddy(target);
   } else {

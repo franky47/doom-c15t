@@ -67,20 +67,42 @@ describe('Databuddy consent', () => {
     assert.equal(target.databuddy.options.disabled, true);
   });
 
-  it('uses Databuddy opt-out and opt-in after the SDK loads', () => {
+  it('resumes the loaded tracker without adding handlers', () => {
     const { target, scripts } = createTarget();
+    let cleared = 0;
     let optedOut = 0;
     let optedIn = 0;
+    let screenViews = 0;
+    let flushes = 0;
 
     setDatabuddyMeasurementConsent(true, target);
+    target.databuddy = {
+      lastPath: '',
+      options: { clientId: CLIENT_ID, disabled: false },
+      clear() {
+        cleared += 1;
+        this.lastPath = '';
+      },
+      screenView() {
+        if (this.lastPath === 'current') return;
+        this.lastPath = 'current';
+        if (!this.options.disabled) screenViews += 1;
+      },
+      flush() { flushes += 1; },
+    };
     target.databuddyOptOut = () => { optedOut += 1; };
     target.databuddyOptIn = () => { optedIn += 1; };
 
     setDatabuddyMeasurementConsent(false, target);
+    target.databuddy.screenView();
     setDatabuddyMeasurementConsent(true, target);
 
     assert.equal(optedOut, 1);
-    assert.equal(optedIn, 1);
+    assert.equal(optedIn, 0);
+    assert.equal(cleared, 1);
+    assert.equal(screenViews, 1);
+    assert.equal(flushes, 1);
+    assert.equal(target.databuddy.options.disabled, false);
     assert.equal(scripts.length, 1);
   });
 
@@ -101,7 +123,7 @@ describe('Databuddy consent', () => {
 
     setDatabuddyMeasurementConsent(true, target);
     setDatabuddyMeasurementConsent(false, target);
-    target.databuddy = { options: { disabled: true } };
+    target.databuddy = { options: { clientId: '', disabled: true } };
     target.databuddyOptOut = () => {};
     target.databuddyOptIn = () => {
       if (target.databuddy.options.disabled) {
