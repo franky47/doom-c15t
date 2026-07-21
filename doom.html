@@ -388,6 +388,51 @@ html, body {
 }
 #missing-api .flag-address:focus-visible { outline: 2px solid #ffcc66; outline-offset: 3px; }
 #missing-api .copy-status { color: #ffcc66; }
+
+#privacy-dialog {
+  width: min(420px, calc(100% - 32px));
+  margin: auto;
+  color: #c2a078;
+  background: #100806;
+  border: 2px solid #6a0f00;
+  box-shadow: 0 0 0 2px #1a0b08, 0 16px 60px #000;
+  padding: 18px;
+  font-family: 'Share Tech Mono', 'Courier New', monospace;
+}
+#privacy-dialog::backdrop { background: rgba(0, 0, 0, 0.82); }
+#privacy-dialog h2 {
+  color: #ffe0a0;
+  font: 16px/1.2 'Silkscreen', monospace;
+  margin-bottom: 10px;
+}
+#privacy-dialog p { font-size: 13px; line-height: 1.45; }
+#privacy-dialog .privacy-categories {
+  display: grid;
+  gap: 8px;
+  margin: 16px 0;
+}
+#privacy-dialog label {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: #ffcc66;
+}
+#privacy-dialog input { accent-color: #8f1f10; }
+#privacy-dialog .privacy-actions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
+#privacy-dialog button {
+  color: #ffcc66;
+  background: #1a0b08;
+  border: 1px solid #6a0f00;
+  padding: 7px 10px;
+  font: 12px 'Silkscreen', monospace;
+  cursor: pointer;
+}
+#privacy-dialog button:hover,
+#privacy-dialog button:focus-visible { background: #32100b; outline: 1px solid #ffcc66; }
 </style>
 </head>
 <body>
@@ -431,7 +476,7 @@ html, body {
     Original HTML-in-canvas DOOM demo by <a href="https://solarise.dev/demos/working-contact-form-inside-doom/about" target="_blank" rel="noopener">Robin Metcalfe</a> &middot;
     c15t adaptation by <a href="https://francoisbest.com" target="_blank" rel="noopener">Fran&ccedil;ois Best</a> &middot;
     <a href="https://github.com/franky47/doom-c15t" target="_blank" rel="noopener">source on GitHub</a> &middot;
-    <button type="button" id="privacy-settings">privacy settings</button> &middot;
+    <span id="privacy-settings-item" hidden><button type="button" id="privacy-settings">privacy settings</button> &middot;</span>
     <a href="https://www.databuddy.cc/privacy" target="_blank" rel="noopener">analytics privacy</a>
   </div>
 </div>
@@ -505,6 +550,23 @@ html, body {
   </div>
 </div>
 
+<dialog id="privacy-dialog" aria-labelledby="privacy-dialog-title">
+  <form method="dialog">
+    <h2 id="privacy-dialog-title">PRIVACY SETTINGS</h2>
+    <p>Databuddy stores anonymous visitor and session IDs and sends usage and performance data only when Analytics is enabled.</p>
+    <div class="privacy-categories">
+      <label><input type="checkbox" checked disabled>Strictly Necessary</label>
+      <label><input type="checkbox" id="privacy-cat-measurement">Analytics</label>
+      <label><input type="checkbox" id="privacy-cat-marketing">Marketing</label>
+      <label><input type="checkbox" id="privacy-cat-experience">Experience</label>
+    </div>
+    <div class="privacy-actions">
+      <button type="submit" value="cancel">Cancel</button>
+      <button type="submit" value="save" id="privacy-save">Save Settings</button>
+    </div>
+  </form>
+</dialog>
+
 <script type="module">
 import {
   WAD_EMBEDDED_OFFSET,
@@ -518,9 +580,12 @@ import { setDatabuddyMeasurementConsent } from './doom-assets/databuddy-consent.
 
   // ─── DOM refs ───
   const canvas      = document.getElementById('game');
-  const terminalEl  = document.getElementById('uac-terminal');
-  const missing     = document.getElementById('missing-api');
-  const loading     = document.getElementById('loading-indicator');
+  const terminalEl          = document.getElementById('uac-terminal');
+  const privacyDialog       = document.getElementById('privacy-dialog');
+  const privacySettings     = document.getElementById('privacy-settings');
+  const privacySettingsItem = document.getElementById('privacy-settings-item');
+  const missing             = document.getElementById('missing-api');
+  const loading        = document.getElementById('loading-indicator');
   const ctx         = canvas.getContext('2d', { alpha: false });
   const flagAddress = 'chrome://flags/#canvas-draw-element';
   let loadingFinished = false;
@@ -1782,7 +1847,9 @@ import { setDatabuddyMeasurementConsent } from './doom-assets/databuddy-consent.
   // player can play Doom, click a form field, fill it in, click out, keep
   // playing. Tab cycles between doom (no focus) and the form inputs.
   function externalPageControlHasFocus() {
-    return document.activeElement?.closest?.('#attribution, #missing-api');
+    return document.activeElement?.closest?.(
+      '#attribution, #missing-api, #privacy-dialog',
+    );
   }
 
   function pageControlHasFocus() {
@@ -1861,6 +1928,7 @@ import { setDatabuddyMeasurementConsent } from './doom-assets/databuddy-consent.
   function saveConsent(detail, measurementConsent) {
     if (!formInteractionEnabled || consentSubmitted) return;
     consentSubmitted = true;
+    privacySettingsItem.hidden = false;
     setDatabuddyMeasurementConsent(measurementConsent);
     // Submission is a user gesture, so use it to return immediately to game
     // input and hide the cursor while the confirmation panel rises away.
@@ -1920,13 +1988,21 @@ import { setDatabuddyMeasurementConsent } from './doom-assets/databuddy-consent.
       : 'ONLY NECESSARY';
     saveConsent(detail, on.includes('measurement'));
   });
-  document.getElementById('privacy-settings').addEventListener('click', () => {
-    if (!formInteractionEnabled) return;
-    consentSubmitted = false;
-    clearTimeout(saveConsent._t);
-    cancelAnimationFrame(riseRAF);
-    panelRise = 0;
-    setBannerState('customize', 'cat-measurement', 1);
+  privacySettings.addEventListener('click', () => {
+    for (const name of optionalConsentNames) {
+      document.getElementById('privacy-cat-' + name).checked =
+        document.getElementById('cat-' + name).checked;
+    }
+    privacyDialog.showModal();
+  });
+  document.getElementById('privacy-save').addEventListener('click', () => {
+    for (const name of optionalConsentNames) {
+      document.getElementById('cat-' + name).checked =
+        document.getElementById('privacy-cat-' + name).checked;
+    }
+    setDatabuddyMeasurementConsent(
+      document.getElementById('privacy-cat-measurement').checked,
+    );
   });
 
   let formStep = 0;
@@ -2140,6 +2216,7 @@ import { setDatabuddyMeasurementConsent } from './doom-assets/databuddy-consent.
   let routingFormClick = false;
   function routeFormClick(e) {
     if (routingFormClick || !formInteractionEnabled || mouseIsCaptured()) return;
+    if (e.target.closest?.('#attribution, #missing-api, #privacy-dialog')) return;
     if (terminalEl.contains(e.target)) return;
     const under = document.elementFromPoint(e.clientX, e.clientY);
     if (!under || !terminalEl.contains(under)) {
