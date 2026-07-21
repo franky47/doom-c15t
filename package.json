@@ -6,6 +6,7 @@
   "type": "module",
   "scripts": {
     "dev": "node scripts/serve.mjs . doom.html",
+    "test": "node --test doom-assets/*.test.js",
     "build": "node scripts/build.mjs",
     "preview": "node scripts/serve.mjs dist index.html"
   },

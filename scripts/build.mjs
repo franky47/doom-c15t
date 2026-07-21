@@ -22,6 +22,7 @@ async function build() {
 
   const runtimeFiles = [
     ['doom.html', 'index.html'],
+    ['doom-assets/databuddy-consent.js'],
     ['doom-assets/doom-meta.js'],
     ['doom-assets/doom.wasm'],
     ['doom-assets/music/D_E1M1.m4a'],

@@ -328,12 +328,18 @@ html, body {
   z-index: 1000;
   pointer-events: auto;
 }
-#attribution a {
+#attribution a,
+#attribution button {
   color: #9a9a9a;
   text-decoration: none;
+  border: 0;
   border-bottom: 1px dotted #555;
+  background: none;
+  font: inherit;
+  cursor: pointer;
 }
-#attribution a:hover { color: #c0c0c0; border-bottom-color: #888; }
+#attribution a:hover,
+#attribution button:hover { color: #c0c0c0; border-bottom-color: #888; }
 #attribution .credit-line { margin-top: 2px; }
 
 /* Gameplay hint sitting above the attribution bar. Warmer tint so it
@@ -424,7 +430,9 @@ html, body {
   <div class="credit-line">
     Original HTML-in-canvas DOOM demo by <a href="https://solarise.dev/demos/working-contact-form-inside-doom/about" target="_blank" rel="noopener">Robin Metcalfe</a> &middot;
     c15t adaptation by <a href="https://francoisbest.com" target="_blank" rel="noopener">Fran&ccedil;ois Best</a> &middot;
-    <a href="https://github.com/franky47/doom-c15t" target="_blank" rel="noopener">source on GitHub</a>
+    <a href="https://github.com/franky47/doom-c15t" target="_blank" rel="noopener">source on GitHub</a> &middot;
+    <button type="button" id="privacy-settings">privacy settings</button> &middot;
+    <a href="https://www.databuddy.cc/privacy" target="_blank" rel="noopener">analytics privacy</a>
   </div>
 </div>
 
@@ -452,7 +460,7 @@ html, body {
          native Space/Enter activation work through the layoutsubtree. -->
     <div class="banner-view">
       <div class="c15-title">WE VALUE YOUR PRIVACY</div>
-      <div class="c15-desc">We use cookies to improve your experience.</div>
+      <div class="c15-desc">Databuddy stores anonymous visitor/session IDs and sends usage and performance data.</div>
       <div class="c15-actions">
         <button type="button" class="c15-btn reject" id="c15-reject">Reject All</button>
         <button type="button" class="c15-btn accept" id="c15-accept">Accept All</button>
@@ -503,6 +511,7 @@ import {
   DOOM_PALETTE,
   DOOM_PATCHES,
 } from './doom-assets/doom-meta.js';
+import { setDatabuddyMeasurementConsent } from './doom-assets/databuddy-consent.js';
 
 (async function () {
   'use strict';
@@ -1772,9 +1781,16 @@ import {
   // Only forward keys to Doom when no form input is focused. That way the
   // player can play Doom, click a form field, fill it in, click out, keep
   // playing. Tab cycles between doom (no focus) and the form inputs.
-  function formHasFocus() {
-    const a = document.activeElement;
-    return a && terminalEl.contains(a);
+  function externalPageControlHasFocus() {
+    return document.activeElement?.closest?.('#attribution, #missing-api');
+  }
+
+  function pageControlHasFocus() {
+    const active = document.activeElement;
+    return active && (
+      terminalEl.contains(active) ||
+      externalPageControlHasFocus()
+    );
   }
 
   // ─── Shoot-to-cycle banner focus ───
@@ -1786,7 +1802,7 @@ import {
   //   3. still fires the weapon in Doom
   // The player highlights a control by shooting, then presses SPACE / ENTER
   // to activate it. Those keys bypass the "forward to Doom" path (see
-  // formHasFocus()) and are delivered natively to the focused <button> /
+  // pageControlHasFocus()) and are delivered natively to the focused <button> /
   // checkbox, so activation is real DOM behaviour, not a synthesised event.
 
   // The focusable controls in the current view, in highlight order. In the
@@ -1834,8 +1850,7 @@ import {
   }
 
   // Record the player's choice and flash the saved confirmation, then raise the
-  // whole panel like a door — revealing the level behind — and park it in the
-  // "dismissed" state, where it remains for the rest of the session.
+  // whole panel like a door and reveal the level behind.
   const consentSoundChannels = {
     button: 'consent-button',
     checkbox: 'consent-checkbox',
@@ -1843,9 +1858,10 @@ import {
   };
 
   let consentSubmitted = false;
-  function saveConsent(detail) {
+  function saveConsent(detail, measurementConsent) {
     if (!formInteractionEnabled || consentSubmitted) return;
     consentSubmitted = true;
+    setDatabuddyMeasurementConsent(measurementConsent);
     // Submission is a user gesture, so use it to return immediately to game
     // input and hide the cursor while the confirmation panel rises away.
     captureMouse();
@@ -1874,8 +1890,21 @@ import {
     });
   });
 
-  document.getElementById('c15-reject').addEventListener('click', () => saveConsent('ALL REJECTED'));
-  document.getElementById('c15-accept').addEventListener('click', () => saveConsent('ALL ACCEPTED'));
+  const optionalConsentNames = ['measurement', 'marketing', 'experience'];
+  function setAllOptionalConsents(enabled) {
+    for (const name of optionalConsentNames) {
+      document.getElementById('cat-' + name).checked = enabled;
+    }
+  }
+
+  document.getElementById('c15-reject').addEventListener('click', () => {
+    setAllOptionalConsents(false);
+    saveConsent('ALL REJECTED', false);
+  });
+  document.getElementById('c15-accept').addEventListener('click', () => {
+    setAllOptionalConsents(true);
+    saveConsent('ALL ACCEPTED', true);
+  });
   document.getElementById('c15-customize').addEventListener('click', () => {
     // Open the category toggles; highlight the first one (next shot → marketing).
     setBannerState('customize', 'cat-measurement', 1);
@@ -1884,9 +1913,20 @@ import {
     setBannerState('banner', 'c15-reject', 1);
   });
   document.getElementById('c15-save').addEventListener('click', () => {
-    const on = ['measurement', 'marketing', 'experience']
+    const on = optionalConsentNames
       .filter(c => document.getElementById('cat-' + c).checked);
-    saveConsent(on.length ? on.map(c => c.toUpperCase()).join(' ') + ' ON' : 'ONLY NECESSARY');
+    const detail = on.length
+      ? on.map(c => c.toUpperCase()).join(' ') + ' ON'
+      : 'ONLY NECESSARY';
+    saveConsent(detail, on.includes('measurement'));
+  });
+  document.getElementById('privacy-settings').addEventListener('click', () => {
+    if (!formInteractionEnabled) return;
+    consentSubmitted = false;
+    clearTimeout(saveConsent._t);
+    cancelAnimationFrame(riseRAF);
+    panelRise = 0;
+    setBannerState('customize', 'cat-measurement', 1);
   });
 
   let formStep = 0;
@@ -1908,12 +1948,21 @@ import {
   const ALWAYS_GAME_KEYS = new Set([
     'ArrowLeft', 'ArrowRight', 'ArrowUp', 'ArrowDown',
   ]);
+  const heldDoomKeys = new Map();
+  const keyId = ev => ev.code || ev.key;
+  function reportDoomKeyDown(ev, key) {
+    heldDoomKeys.set(keyId(ev), key);
+    doomExports.reportKeyDown(key);
+  }
 
   addEventListener('keydown', ev => {
+    if (externalPageControlHasFocus()) return;
+    if (!mouseIsCaptured() && ev.key === 'Tab') return;
+
     // Ctrl remains a keyboard fallback for fire. Mouse fire below uses Doom's
     // native mouse-button path, so both inputs can be held independently.
     if (ev.key === 'Control') {
-      doomExports.reportKeyDown(doomExports.KEY_FIRE);
+      reportDoomKeyDown(ev, doomExports.KEY_FIRE);
       if (!ev.repeat) {
         addBulletHole();
         advanceFormStep();
@@ -1934,43 +1983,32 @@ import {
 
     if (ALWAYS_GAME_KEYS.has(ev.key)) {
       const k = translateKey(ev);
-      if (k !== null && k !== undefined) doomExports.reportKeyDown(k);
+      if (k !== null && k !== undefined) reportDoomKeyDown(ev, k);
       ev.preventDefault();
       return;
     }
-    if (formHasFocus()) return;
+    if (pageControlHasFocus()) return;
     const k = translateKey(ev);
     if (k === null || k === undefined) return;
-    doomExports.reportKeyDown(k);
+    reportDoomKeyDown(ev, k);
     ev.preventDefault();
   });
 
   addEventListener('keyup', ev => {
-    if (ev.key === 'Control') {
-      doomExports.reportKeyUp(doomExports.KEY_FIRE);
-      ev.preventDefault();
-      return;
-    }
-
     const movement = movementCode.get(ev.code);
-    if (movement !== undefined) {
+    if (movement !== undefined && heldMovementCodes.has(ev.code)) {
       heldMovementCodes.delete(ev.code);
       doomExports.reportKeyUp(movement);
       ev.preventDefault();
       return;
     }
 
-    if (ALWAYS_GAME_KEYS.has(ev.key)) {
-      const k = translateKey(ev);
-      if (k !== null && k !== undefined) doomExports.reportKeyUp(k);
+    const id = keyId(ev);
+    if (heldDoomKeys.has(id)) {
+      doomExports.reportKeyUp(heldDoomKeys.get(id));
+      heldDoomKeys.delete(id);
       ev.preventDefault();
-      return;
     }
-    if (formHasFocus()) return;
-    const k = translateKey(ev);
-    if (k === null || k === undefined) return;
-    doomExports.reportKeyUp(k);
-    ev.preventDefault();
   });
 
   // ─── Pointer lock + native Doom mouse input ───
@@ -2076,7 +2114,10 @@ import {
       doomExports.reportKeyUp(movementCode.get(code));
     }
     heldMovementCodes.clear();
-    doomExports.reportKeyUp(doomExports.KEY_FIRE);
+    for (const key of heldDoomKeys.values()) {
+      doomExports.reportKeyUp(key);
+    }
+    heldDoomKeys.clear();
     setMouseFire(false);
     pendingMouseX = 0;
   });
@@ -2093,65 +2134,37 @@ import {
   // to synthesize events and routes correctly, which hid the bug until
   // a real user tried it.)
   //
-  // The fix: listen for pointerdown (and mousedown as a safety net) on
-  // `window` in the CAPTURE phase so we see every click no matter where
-  // Chromium routes it — canvas, document, body, whatever. Then ask the
-  // browser what element is under the cursor via elementFromPoint(). If
-  // it's inside our form, walk up to a focusable control (in case
-  // elementFromPoint lands on a wrapper div) and .focus() it. Buttons
-  // also get .click() so the form submit fires. All events dispatched
-  // are real DOM events; we're just compensating for the gap in native
-  // hit-test routing under layoutsubtree, not faking user interaction.
-  //
-  // The form's submit handler is guarded against double-fire, so if
-  // Chromium's native routing does work and delivers the click normally
-  // too, the second submit is ignored.
+  // The fix: inspect click coordinates in the capture phase. If Chromium
+  // routed the click to the right control, native handling proceeds. If it
+  // routed the click elsewhere, dispatch one click to the control under it.
+  let routingFormClick = false;
   function routeFormClick(e) {
-    // Menu clicks must not leak into the live consent DOM. Pointer lock turns
-    // the mouse into relative game input; screen-space DOM hit testing would
-    // otherwise activate whichever control sits at centre.
-    if (!formInteractionEnabled || mouseIsCaptured()) return;
+    if (routingFormClick || !formInteractionEnabled || mouseIsCaptured()) return;
+    if (terminalEl.contains(e.target)) return;
     const under = document.elementFromPoint(e.clientX, e.clientY);
     if (!under || !terminalEl.contains(under)) {
-      // Click outside the form — pull keyboard focus back to the canvas
-      // so Doom gets its keys (unless the click happened somewhere that
-      // naturally owns focus, like the address bar / devtools).
       if (!formHitTest(e.clientX, e.clientY) && document.activeElement !== canvas) {
         canvas.focus();
       }
       return;
     }
-    if (under === terminalEl) return; // click on form background, no-op
+    if (under === terminalEl) return;
 
-    // Walk up to a focusable control in case elementFromPoint returned
-    // a wrapping label / div / span.
-    const FOCUSABLE = /^(INPUT|BUTTON|TEXTAREA|SELECT|A)$/;
-    let target = under;
-    while (target && target !== terminalEl && !FOCUSABLE.test(target.tagName)) {
-      target = target.parentElement;
-    }
-    if (!target || target === terminalEl) return;
+    let target = under.closest?.('button, input, textarea, select, a');
+    if (!target) target = under.closest?.('label')?.querySelector('input');
+    if (!target || !terminalEl.contains(target)) return;
 
-    if (target.tagName === 'BUTTON') {
-      target.focus();
+    e.preventDefault();
+    e.stopPropagation();
+    target.focus();
+    routingFormClick = true;
+    try {
       target.click();
-    } else if (target.tagName === 'INPUT' && target.type === 'checkbox' && !target.disabled) {
-      // Category toggle: focus AND flip it, since native click routing into
-      // the layoutsubtree is unreliable (same reason buttons are clicked here).
-      target.focus();
-      target.click();
-    } else if (typeof target.focus === 'function') {
-      target.focus();
+    } finally {
+      routingFormClick = false;
     }
-    // Don't preventDefault — native routing might still deliver events
-    // and that's fine (double-fire guards are in place).
   }
-  // Capture phase on window catches the event no matter which DOM node
-  // Chromium picked as the target. Both pointerdown and mousedown are
-  // covered because a handful of input paths (touch emulation, some
-  // extensions) sometimes fire only one of the two.
-  window.addEventListener('pointerdown', routeFormClick, true);
-  window.addEventListener('mousedown',   routeFormClick, true);
+  window.addEventListener('click', routeFormClick, true);
 
   // ─── Terminal placement over the target wall ───
   // The form is a child of <canvas layoutsubtree>. With layoutsubtree set,
@@ -2531,11 +2544,10 @@ import {
     requestAnimationFrame(() => positionFormOverDoor());
   });
 
-  // ─── P-key demo: walk the banner and accept ───
+  // ─── P-key demo: walk the banner ───
   // When the user presses P (outside the banner) we highlight each button in
-  // turn — reject, accept — then activate accept with a real .click(), so the
-  // whole capture→quantise→wall pipeline shows the highlight moving and the
-  // saved confirmation, exactly as if a player had shot through the controls.
+  // turn — reject, accept — then leave accept focused for the player to choose.
+  // The demo must not make a consent choice on the player's behalf.
   const sleep = ms => new Promise(r => setTimeout(r, ms));
   let demoRunning = false;
   async function runDemo() {
@@ -2546,12 +2558,11 @@ import {
       document.getElementById(id).focus();
       await sleep(550);
     }
-    document.getElementById('c15-accept').click();
     demoRunning = false;
   }
 
   addEventListener('keydown', ev => {
-    if ((ev.key === 'p' || ev.key === 'P') && !formHasFocus()) {
+    if ((ev.key === 'p' || ev.key === 'P') && !pageControlHasFocus()) {
       ev.preventDefault();
       runDemo();
     }
